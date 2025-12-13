@@ -31,7 +31,7 @@ To test manually:
 ```bash
 # In venv
 python app.py
-# Open http://localhost:5000/ in a browser
+# Open http://localhost:5656/ in a browser (or http://<pi-ip>:5656/ from another machine)
 ```
 
 Stop it (Ctrl+C) before configuring systemd.
@@ -73,13 +73,14 @@ Check status:
 sudo systemctl status sssnl-backend.service
 ```
 
-The backend exposes:
-- `/`           – HTML dashboard
-- `/status`    – JSON status (temp, humidity, motion)
-- `/playlist`  – JSON playlist built from `static/media`
-- `/media/*`   – media upload/list/delete (from media_admin.py)
-- `/mock-*`    – mock motion & DHT endpoints for dev
-- `/dev`       – optional Flutter Web dev panel (if built, see below)
+The backend exposes (highest level view):
+- `/`             – HTML dashboard
+- `/status`      – JSON status (temp, humidity, motion)
+- `/playlist`    – JSON playlist built from `static/media`
+- `/api/media/*` – media upload/list/delete/fetch/info (from media_admin.py)
+- `/mock-*`      – mock motion & DHT endpoints for dev
+- `/dashboard`   – optional Flutter Web dashboard (if built, see below)
+- `/media`, `/dev` – optional Flutter Web media/dev controls (if built, see below)
 
 ---
 
@@ -100,7 +101,7 @@ Type=simple
 User=<user>
 Environment=DISPLAY=:0
 Environment=XAUTHORITY=/home/<user>/.Xauthority
-ExecStart=/usr/bin/chromium-browser --kiosk --incognito http://localhost:5000/
+ExecStart=/usr/bin/chromium-browser --kiosk --incognito http://localhost:5656/
 Restart=always
 
 [Install]
@@ -117,7 +118,7 @@ sudo systemctl start sssnl-dashboard.service
 
 On boot, the Pi will:
 - start `sssnl-backend` (Flask), then
-- open Chromium fullscreen at `http://localhost:5000/`.
+- open Chromium fullscreen at `http://localhost:5656/`.
 
 > If you later prefer the Flutter desktop dashboard instead of Chromium,
 > build it with `flutter build linux` in `sssnl_app` and update `ExecStart`
@@ -175,27 +176,28 @@ sudo systemctl status sssnl-fetch-message.service
 
 ---
 
-## 5. Optional: Flutter dev/media panel at /dev
+## 5. Optional: Flutter Web dashboard and dev/media panels
 
-If you want the Flutter media/dev controls UI to run in the browser at `/dev`:
+If you want the Flutter UIs to run in the browser as well:
 
 1. On the Pi (or on a dev machine, then copy the build):
 
 ```bash
+cd /home/<user>/sssnl/sssnl_app
+flutter build web
+
 cd /home/<user>/sssnl/sssnl_media_controls
 flutter build web
 ```
 
-This creates `sssnl_media_controls/build/web`.
+2. Ensure the backend is running. The routes in `app.py` will now serve the Flutter Web apps:
 
-2. Ensure the backend is running. The route `/dev` in `app.py` will now serve the Flutter Web app:
+- Dashboard (Flutter):
+	- `http://localhost:5656/dashboard`
 
-- Open: `http://<pi-ip>:5000/dev`
-- Login with the dummy credentials: `dev` / `dev123`.
+- Media & Dev controls (same Flutter app, different entry paths):
+	- `http://localhost:5656/media` → opens the Media tab (upload/list/delete via `/api/media/*`).
+	- `http://localhost:5656/dev`   → opens the Developer tab (calls `/mock-*`).
 
-From there you can:
-- Manage media with the Media tab (upload/list/delete via `/media/*`).
-- Trigger mock motion and DHT with the Developer tab (via `/mock-*`).
-
-On the production Pi you can simply avoid using these mock controls so
+On the production Pi you can simply avoid using the mock controls so
 that real hardware drives the dashboard as intended.

@@ -10,8 +10,8 @@ void main() {
 }
 
 /// Base URL of the Flask backend.
-/// On the Pi/desktop where Flask runs locally, this can stay localhost.
-const String kBackendBaseUrl = 'http://localhost:5000';
+/// The backend now runs on localhost:5656.
+const String kBackendBaseUrl = 'http://localhost:5656';
 
 class SssnlApp extends StatelessWidget {
   const SssnlApp({super.key});

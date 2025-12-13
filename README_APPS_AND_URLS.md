@@ -19,37 +19,42 @@ This is the **only required long‑running Python process**.
 
 ### Front‑end A: Dashboard display
 
-You have two ways to show the dashboard:
+You have two options; both use the same backend APIs:
 
-1. **HTML dashboard in a browser (recommended for Pi):**
-   - Use Chromium/another browser pointed to `http://localhost:5000/`.
-   - Can be started at boot in kiosk mode via `sssnl-dashboard.service`.
+1. **HTML dashboard in a browser (simple, good for Pi):**
+  - Use Chromium/another browser pointed to `http://localhost:5656/`.
+  - Can be started at boot in kiosk mode via `sssnl-dashboard.service`.
 
-2. **Flutter desktop dashboard app (development / optional on Pi):**
-   - Project: `sssnl_app`
-   - Run on desktop: `cd sssnl_app && flutter run -d linux`
-   - Calls the backend JSON APIs (`/status`, `/playlist`) and plays the media.
+2. **Flutter dashboard app (desktop and web):**
+  - Project: `sssnl_app`
+  - Desktop dev: `cd sssnl_app && flutter run -d linux`
+  - Web build (served by app.py):
+    - URL: `http://localhost:5656/dashboard`
 
-### Front‑end B: Media & Developer controls
+### Front‑end B: Media & Developer controls (single Flutter app)
 
-Again, two ways to use the same backend APIs:
+One Flutter app (`sssnl_media_controls`) used in multiple ways:
 
-1. **Browser UI from media_admin.py**
-   - URL: `http://<host>:5000/media/manage`
-   - Simple HTML page for upload/list/delete using `/media/*` endpoints.
+1. **Desktop dev:**
+  - `cd sssnl_media_controls && flutter run -d linux`
 
-2. **Flutter media/dev controls app**
-   - Project: `sssnl_media_controls`
-   - Linux app (dev): `cd sssnl_media_controls && flutter run -d linux`
-   - Optional web build served at `/dev` (see below).
+2. **Web build (served by app.py):**
+  - Build once: `flutter build web`
+  - URLs:
+    - `http://localhost:5656/media` → same app, opens **Media** tab.
+    - `http://localhost:5656/dev`   → same app, opens **Developer** tab.
 
-Both talk to the same Flask endpoints; no extra backend.
+There is also a minimal HTML page from media_admin.py at:
+
+- `http://localhost:5656/media/manage`
+
+which is backed by the same media APIs, but the recommended UI is the Flutter app (desktop or web).
 
 ---
 
 ## 2. Main URLs exposed by app.py
 
-Assuming the backend is running on `http://<host>:5000`.
+Assuming the backend is reachable as `http://localhost:5656`.
 
 ### Dashboard & status
 
@@ -75,24 +80,24 @@ Assuming the backend is running on `http://<host>:5000`.
 - `/dht-debug`  
   Diagnostic endpoint to see which DHT backend is active and force a one‑off read.
 
-### Media management (from media_admin.py)
+### Media management (from media_admin.py, under /api/media)
 
 - `/media/manage`  
   HTML single‑page media manager (upload/list/delete).
 
-- `/media/upload` (POST, multipart)  
+- `/api/media/upload` (POST, multipart)  
   Upload files to a target folder (usually `media`), ends up under `static/media`.
 
-- `/media/files` (GET)  
+- `/api/media/files` (GET)  
   JSON listing of all files in `static/media` with type information.
 
-- `/media/delete` (POST JSON)  
+- `/api/media/delete` (POST JSON)  
   Delete a single file by name from `static/media`.
 
-- `/media/fetch` (POST JSON)  
+- `/api/media/fetch` (POST JSON)  
   Download a remote URL directly into the chosen media folder.
 
-- `/media/info` (GET)  
+- `/api/media/info` (GET)  
   Returns allowed targets and extensions.
 
 ### Mock / developer endpoints
@@ -111,21 +116,28 @@ Used mainly for desktop testing or via the Flutter dev panel; you can simply ign
 - `/mock-dht/clear` (POST)  
   Clears DHT override (back to real sensor or random mock values).
 
-### Optional: Flutter Web dev/media panel
+### Optional: Flutter Web dashboard & dev/media
 
-If you build the web version of `sssnl_media_controls`:
+If you build the web versions:
 
 ```bash
+cd /home/<user>/sssnl/sssnl_app
+flutter build web
+
 cd /home/<user>/sssnl/sssnl_media_controls
 flutter build web
 ```
 
-then app.py will serve it at:
+then app.py will serve them at:
+
+- `/dashboard`  
+  Flutter Web dashboard (same logic as the desktop dashboard app).
+
+- `/media` and `/media/*`  
+  Flutter Web media/dev app, opening the **Media** tab by default.
 
 - `/dev` and `/dev/*`  
-  Flutter Web app with:
-  - **Media** tab (upload/list/delete via `/media/*`).
-  - **Developer** tab (buttons that call `/mock-motion*` and `/mock-dht*`).
+  Same Flutter Web media/dev app, opening the **Developer** tab by default.
 
 ---
 
@@ -137,8 +149,8 @@ then app.py will serve it at:
 - **"Do I need the Flutter apps on the Pi?"**  
   No. They are mainly for development and can be used on a laptop/desktop. On the Pi, Chromium + the HTML dashboard is simpler and lighter.
 
-- **"Where do I manage media from?"**  
-  Either from `/media/manage` in a browser, or from the Flutter media/dev app (desktop or `/dev` web build). Both write into `static/media`.
+-- **"Where do I manage media from?"**  
+  Prefer the Flutter media/dev app (desktop, or `/media` on the web). The older `/media/manage` HTML page is still available but not required. All write into `static/media`.
 
 - **"How do I simulate motion/DHT from my laptop?"**  
   Use the Flutter dev panel (desktop or `/dev`) or call the mock endpoints directly with curl/postman.

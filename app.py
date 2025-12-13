@@ -76,15 +76,16 @@ GPIO.setup(PIR_PIN, GPIO.IN)
 # -------------------
 app = Flask(__name__)
 
-# Register media uploader blueprint for simple CMS
+# Register media uploader blueprint for simple CMS (API under /api/media)
 try:
     from media_admin import bp as media_uploader_bp
-    app.register_blueprint(media_uploader_bp, url_prefix='/media')
+    app.register_blueprint(media_uploader_bp, url_prefix='/api/media')
 except Exception as e:
     print('Warning: media_uploader blueprint not registered:', e)
 
 # Optional path to Flutter Web build of the media/dev controls app.
 DEV_WEB_DIR = os.path.join(os.path.dirname(__file__), 'sssnl_media_controls', 'build', 'web')
+DASHBOARD_WEB_DIR = os.path.join(os.path.dirname(__file__), 'sssnl_app', 'build', 'web')
 
 # Shared values
 current_temp = "--"
@@ -484,8 +485,8 @@ def mock_motion():
     """Force motion on/off for testing on desktop.
 
     Usage examples:
-      curl -X POST localhost:5000/mock-motion -H 'Content-Type: application/json' -d '{"active": true}'
-      curl -X POST localhost:5000/mock-motion -H 'Content-Type: application/json' -d '{"active": false}'
+      curl -X POST localhost:5656/mock-motion -H 'Content-Type: application/json' -d '{"active": true}'
+      curl -X POST localhost:5656/mock-motion -H 'Content-Type: application/json' -d '{"active": false}'
     """
     global mock_motion_override, motion_active, motion_status_msg, last_motion_change
 
@@ -564,10 +565,30 @@ def clear_mock_dht():
     return jsonify({'ok': True, 'override': False})
 
 
-@app.route('/dev/')
-@app.route('/dev/<path:path>')
-def dev_web_app(path="index.html"):
-    """Serve the Flutter Web build of the media/dev controls app.
+@app.route('/dashboard/')
+@app.route('/dashboard/<path:path>')
+def dashboard_web_app(path="index.html"):
+    """Serve the Flutter Web build of the dashboard app.
+
+    Build first with:
+      cd sssnl_app && flutter build web
+    """
+    if not os.path.isdir(DASHBOARD_WEB_DIR):
+        return jsonify({
+            'error': 'dashboard_web_not_built',
+            'message': 'Run "flutter build web" in sssnl_app first.',
+        }), 500
+
+    full_path = os.path.join(DASHBOARD_WEB_DIR, path)
+    if not os.path.exists(full_path) or os.path.isdir(full_path):
+        path = 'index.html'
+    return send_from_directory(DASHBOARD_WEB_DIR, path)
+
+
+@app.route('/media/')
+@app.route('/media/<path:path>')
+def media_web_app(path="index.html"):
+    """Serve the Flutter Web build of the media/dev controls app for media/dev UI.
 
     Build first with:
       cd sssnl_media_controls && flutter build web
@@ -584,6 +605,16 @@ def dev_web_app(path="index.html"):
     if not os.path.exists(full_path) or os.path.isdir(full_path):
         path = 'index.html'
     return send_from_directory(DEV_WEB_DIR, path)
+
+
+@app.route('/dev/')
+@app.route('/dev/<path:path>')
+def dev_web_app(path="index.html"):
+    """Alias /dev to the same Flutter Web media/dev controls app.
+
+    /media will open the Media tab, /dev will open the Developer tab.
+    """
+    return media_web_app(path)
 
 # -------------------
 # STARTUP: prepare static folders, images and playlist
@@ -666,5 +697,5 @@ if __name__ == "__main__":
 
     # Client will fetch playlist via /playlist; no need to build here
 
-    print("🚀 Dashboard running on http://0.0.0.0:5000 (single-playlist mode)")
-    app.run(host="0.0.0.0", port=5000)
+    print("🚀 Dashboard running on http://0.0.0.0:5656 (single-playlist mode)")
+    app.run(host="0.0.0.0", port=5656)

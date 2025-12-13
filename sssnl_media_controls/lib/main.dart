@@ -8,7 +8,8 @@ void main() {
   runApp(const MediaControlsApp());
 }
 
-const String kBackendBaseUrl = 'http://localhost:5000';
+/// Base URL of the Flask backend. The backend now runs on localhost:5656.
+const String kBackendBaseUrl = 'http://localhost:5656';
 
 // Dummy dev credentials (front-end only, not secure).
 const String kDevUsername = 'dev';
@@ -127,6 +128,20 @@ class _MainShellState extends State<_MainShell> {
   int _tab = 0;
 
   @override
+  void initState() {
+    super.initState();
+    // On Web, pick initial tab based on URL path:
+    //   /media -> Media tab (0)
+    //   /dev   -> Developer tab (1)
+    final path = Uri.base.path.toLowerCase();
+    if (path.contains('/dev')) {
+      _tab = 1;
+    } else {
+      _tab = 0;
+    }
+  }
+
+  @override
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(
@@ -191,8 +206,8 @@ class _MediaManagerPageState extends State<_MediaManagerPage> {
   Future<void> _refresh() async {
     setState(() => _loading = true);
     try {
-      final resp =
-          await http.get(Uri.parse('$kBackendBaseUrl/media/files')).timeout(
+        final resp =
+          await http.get(Uri.parse('$kBackendBaseUrl/api/media/files')).timeout(
         const Duration(seconds: 10),
       );
       if (resp.statusCode == 200) {
@@ -220,7 +235,7 @@ class _MediaManagerPageState extends State<_MediaManagerPage> {
       final path = file.path;
       if (path == null) continue;
 
-      final uri = Uri.parse('$kBackendBaseUrl/media/upload');
+      final uri = Uri.parse('$kBackendBaseUrl/api/media/upload');
       final request = http.MultipartRequest('POST', uri)
         ..fields['target'] = 'media'
         ..files.add(await http.MultipartFile.fromPath('file', path));
@@ -256,8 +271,8 @@ class _MediaManagerPageState extends State<_MediaManagerPage> {
     if (ok != true) return;
 
     try {
-      final resp = await http
-          .post(Uri.parse('$kBackendBaseUrl/media/delete'),
+        final resp = await http
+          .post(Uri.parse('$kBackendBaseUrl/api/media/delete'),
               headers: {'Content-Type': 'application/json'},
               body: json.encode({'filename': file.name}))
           .timeout(const Duration(seconds: 10));

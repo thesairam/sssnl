@@ -21,6 +21,20 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent
 
 
+def ensure_flutter_web_build(app_dir: Path, label: str) -> None:
+    """Build Flutter web for the given app if build/web is missing.
+
+    This lets app.py serve /dashboard, /media and /dev by default.
+    """
+    web_index = app_dir / "build" / "web" / "index.html"
+    if web_index.exists():
+        return
+    print(f"[launcher] Web build for {label} not found; running 'flutter build web'...")
+    try:
+        subprocess.run(["flutter", "build", "web"], cwd=str(app_dir), check=True)
+    except Exception as exc:  # noqa: BLE001
+        print(f"[launcher] Warning: flutter build web failed for {label}: {exc}")
+
 def start_process(name: str, args: list[str], cwd: Path) -> subprocess.Popen:
     print(f"[launcher] Starting {name} in {cwd} -> {' '.join(args)}")
     return subprocess.Popen(args, cwd=str(cwd))
@@ -30,6 +44,12 @@ def main() -> None:
     procs: list[tuple[str, subprocess.Popen]] = []
 
     try:
+        # Ensure Flutter web builds exist so /dashboard, /media, /dev work by default.
+        sssnl_app_dir = ROOT / "sssnl_app"
+        media_controls_dir = ROOT / "sssnl_media_controls"
+        ensure_flutter_web_build(sssnl_app_dir, "dashboard")
+        ensure_flutter_web_build(media_controls_dir, "media_controls")
+
         # 1) Flask backend (app.py)
         procs.append(
             (
@@ -39,7 +59,6 @@ def main() -> None:
         )
 
         # 2) Flutter dashboard app (sssnl_app)
-        sssnl_app_dir = ROOT / "sssnl_app"
         procs.append(
             (
                 "dashboard",
@@ -52,7 +71,6 @@ def main() -> None:
         )
 
         # 3) Flutter media/dev controls app (sssnl_media_controls)
-        media_controls_dir = ROOT / "sssnl_media_controls"
         procs.append(
             (
                 "media_controls",
