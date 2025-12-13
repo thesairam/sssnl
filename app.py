@@ -1,29 +1,43 @@
 # ...existing code...
-import RPi.GPIO as GPIO
-# DHT library selection: prefer CircuitPython driver, fall back to legacy Adafruit_DHT, else mock
+try:
+    import RPi.GPIO as GPIO
+    _HAS_GPIO = True
+except Exception:
+    _HAS_GPIO = False
+
+    class _MockGPIO:
+        BCM = 0
+        IN = 0
+
+        def setmode(self, *args, **kwargs):
+            pass
+
+        def setup(self, *args, **kwargs):
+            pass
+
+        def input(self, *args, **kwargs):
+            # no real PIR on desktop; default low (no motion)
+            return 0
+
+    GPIO = _MockGPIO()
+    print('RPi.GPIO not available; using mock GPIO (no real motion input)')
+
+# DHT library selection: prefer CircuitPython driver, else mock
 try:
     import board
     import adafruit_dht as adafruit_circ_dht
     _DHT_LIB = 'circuitpython'
     print('Using adafruit_circuitpython_dht')
 except Exception:
-    try:
-        import Adafruit_DHT
-        adafruit_circ_dht = None
-        board = None
-        _DHT_LIB = 'legacy'
-        print('Using legacy Adafruit_DHT')
-    except Exception:
-        adafruit_circ_dht = None
-        board = None
-        Adafruit_DHT = None
-        _DHT_LIB = 'mock'
-        print('No DHT library available; using mock values')
+    adafruit_circ_dht = None
+    board = None
+    _DHT_LIB = 'mock'
+    print('No CircuitPython DHT library available; using mock values')
 import subprocess
 import time
 import threading
 import os, shutil
-from flask import Flask, render_template_string, jsonify
+from flask import Flask, render_template_string, jsonify, request, send_from_directory
 
 # -------------------
 # CONFIG
@@ -40,7 +54,7 @@ if _DHT_LIB == 'circuitpython':
         if DHT_TYPE == 'DHT11':
             _dht_sensor_obj = adafruit_circ_dht.DHT11(board_pin)
         else:
-            _dht_sensor_obj = adafruit_circ_dht.DHT11(board_pin)
+            _dht_sensor_obj = adafruit_circ_dht.DHT22(board_pin)
     except Exception as e:
         print('Failed to initialize CircuitPython DHT sensor:', e)
         _dht_sensor_obj = None
@@ -69,12 +83,20 @@ try:
 except Exception as e:
     print('Warning: media_uploader blueprint not registered:', e)
 
+# Optional path to Flutter Web build of the media/dev controls app.
+DEV_WEB_DIR = os.path.join(os.path.dirname(__file__), 'sssnl_media_controls', 'build', 'web')
+
 # Shared values
 current_temp = "--"
 current_hum = "--"
 motion_active = False
 video_process = None
 motion_status_msg = "No motion"
+
+# Optional overrides used for desktop/mock testing; when not None,
+# the motion detector / DHT reader will use these instead of hardware.
+mock_motion_override = None  # type: ignore[assignment]
+mock_dht_override = None     # type: ignore[assignment]
 
 # diagnostic timestamps/status
 last_dht_time = None
@@ -105,7 +127,11 @@ def read_dht_sensor():
         try:
             # protect hardware access with a lock to avoid concurrent access from endpoints
             with dht_lock:
-                if _DHT_LIB == 'circuitpython' and _dht_sensor_obj is not None:
+                if mock_dht_override is not None:
+                    # explicit override for testing (desktop / dev tools)
+                    temperature = mock_dht_override.get('temp')
+                    humidity = mock_dht_override.get('hum')
+                elif _DHT_LIB == 'circuitpython' and _dht_sensor_obj is not None:
                     try:
                         # CircuitPython driver exposes properties
                         temperature = _dht_sensor_obj.temperature
@@ -115,15 +141,6 @@ def read_dht_sensor():
                         print('CircuitPython DHT read error:', e)
                         temperature = None
                         humidity = None
-                elif _DHT_LIB == 'legacy' and Adafruit_DHT is not None:
-                    try:
-                        # legacy driver: read_retry
-                        sensor = Adafruit_DHT.DHT22 if DHT_TYPE == 'DHT22' else Adafruit_DHT.DHT11
-                        humidity, temperature = Adafruit_DHT.read_retry(sensor, DHT_PIN)
-                    except Exception as e:
-                        print('Legacy Adafruit_DHT read error:', e)
-                        humidity = None
-                        temperature = None
                 else:
                     # mock values for testing when no library is available
                     import random
@@ -164,6 +181,11 @@ def motion_detector():
         last_motion_raw = raw
         # interpret according to PIR_ACTIVE_VALUE
         is_motion = (raw == PIR_ACTIVE_VALUE)
+
+        # If a mock override is set (e.g., from /mock-motion endpoint),
+        # ignore the hardware reading and use the override value instead.
+        if mock_motion_override is not None:
+            is_motion = bool(mock_motion_override)
 
         if last_state is None:
             last_state = is_motion
@@ -455,6 +477,113 @@ def dht_debug():
         read['error'] = str(e)
 
     return jsonify({'backend': backend, 'read': read, 'last_dht_time': last_dht_time, 'last_dht_success': last_dht_success})
+
+
+@app.route('/mock-motion', methods=['POST'])
+def mock_motion():
+    """Force motion on/off for testing on desktop.
+
+    Usage examples:
+      curl -X POST localhost:5000/mock-motion -H 'Content-Type: application/json' -d '{"active": true}'
+      curl -X POST localhost:5000/mock-motion -H 'Content-Type: application/json' -d '{"active": false}'
+    """
+    global mock_motion_override, motion_active, motion_status_msg, last_motion_change
+
+    data = request.get_json(silent=True) or {}
+    val = data.get('active')
+    if val is None:
+        # allow query param ?active=true as a fallback
+        qp = request.args.get('active')
+        if qp is not None:
+            val = qp
+
+    # Normalize to boolean
+    if isinstance(val, str):
+        val = val.strip().lower() in {"1", "true", "on", "yes"}
+    elif isinstance(val, (int, float)):
+        val = bool(val)
+
+    active = bool(val)
+    mock_motion_override = active
+    motion_active = active
+    motion_status_msg = "Motion detected" if active else "No motion"
+    last_motion_change = time.time()
+
+    return jsonify({
+        'ok': True,
+        'motion_active': motion_active,
+        'override': True,
+    })
+
+
+@app.route('/mock-motion/clear', methods=['POST'])
+def clear_mock_motion():
+    """Clear the motion override so PIR GPIO drives motion again."""
+    global mock_motion_override
+    mock_motion_override = None
+    return jsonify({
+        'ok': True,
+        'override': False,
+        'motion_active': motion_active,
+    })
+
+
+@app.route('/mock-dht', methods=['POST'])
+def mock_dht():
+    """Override DHT readings for desktop/dev testing.
+
+    JSON body: {"temp": 25.0, "hum": 60.0}
+    """
+    global mock_dht_override, current_temp, current_hum, last_dht_time, last_dht_success
+
+    data = request.get_json(silent=True) or {}
+    temp = data.get('temp')
+    hum = data.get('hum')
+
+    try:
+        temp_val = float(temp) if temp is not None else None
+        hum_val = float(hum) if hum is not None else None
+    except (TypeError, ValueError):
+        return jsonify({'ok': False, 'error': 'invalid temp/hum'}), 400
+
+    mock_dht_override = {'temp': temp_val, 'hum': hum_val}
+    if temp_val is not None and hum_val is not None:
+        current_temp = f"{temp_val:.1f}°C"
+        current_hum = f"{hum_val:.1f}%"
+        last_dht_time = time.time()
+        last_dht_success = True
+
+    return jsonify({'ok': True, 'override': True, 'temp': temp_val, 'hum': hum_val})
+
+
+@app.route('/mock-dht/clear', methods=['POST'])
+def clear_mock_dht():
+    """Clear DHT override so real/random readings are used again."""
+    global mock_dht_override
+    mock_dht_override = None
+    return jsonify({'ok': True, 'override': False})
+
+
+@app.route('/dev/')
+@app.route('/dev/<path:path>')
+def dev_web_app(path="index.html"):
+    """Serve the Flutter Web build of the media/dev controls app.
+
+    Build first with:
+      cd sssnl_media_controls && flutter build web
+    """
+    # If the web build is missing, return a helpful JSON error.
+    if not os.path.isdir(DEV_WEB_DIR):
+        return jsonify({
+            'error': 'dev_web_not_built',
+            'message': 'Run "flutter build web" in sssnl_media_controls first.',
+        }), 500
+
+    # Fallback to index.html for unknown paths (SPA-style routing).
+    full_path = os.path.join(DEV_WEB_DIR, path)
+    if not os.path.exists(full_path) or os.path.isdir(full_path):
+        path = 'index.html'
+    return send_from_directory(DEV_WEB_DIR, path)
 
 # -------------------
 # STARTUP: prepare static folders, images and playlist

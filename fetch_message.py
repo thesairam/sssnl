@@ -5,12 +5,14 @@ import urllib.request
 from pathlib import Path
 
 
-# Absolute path requested by user
-STATIC_DIR = Path("/home/saipi/Projects/sssnl/static/media")
+# Resolve static/media relative to this file's directory so it works on
+# any username (e.g. /home/<user>/sssnl/static/media).
+PROJECT_ROOT = Path(__file__).resolve().parent
+STATIC_DIR = PROJECT_ROOT / "static" / "media"
 
 
 def fetch_today_message_image() -> str | None:
-    """Fetch today's image from mysai.org and save to /home/saipi/Projects/sssnl/static.
+    """Fetch today's image from mysai.org and save to static/media.
 
     URL pattern assumed: https://www.mysai.org/month{M}/{D}.jpg
     Saves as latest.jpg in the static directory.
