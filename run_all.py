@@ -23,7 +23,7 @@ import webbrowser
 ROOT = Path(__file__).resolve().parent
 
 
-def ensure_flutter_web_build(app_dir: Path, label: str) -> None:
+def ensure_flutter_web_build(app_dir: Path, label: str, flutter_bin: str) -> None:
     """Build Flutter web for the given app with correct base href if missing.
 
     Dashboard needs base href `/dashboard/`; media/dev needs `/media/`.
@@ -33,11 +33,11 @@ def ensure_flutter_web_build(app_dir: Path, label: str) -> None:
     web_index = out_dir / "index.html"
     if web_index.exists():
         return
-    print(f"[launcher] Web build for {label} not found; running 'flutter build web' with base href...")
+    print(f"[launcher] Web build for {label} not found; running '{flutter_bin} build web' with base href...")
     try:
         base = "/dashboard/" if label == "dashboard" else "/media/"
         subprocess.run([
-            "flutter", "build", "web",
+            flutter_bin, "build", "web",
             "--base-href", base,
             "--release",
             "--output", str(out_dir)
@@ -85,13 +85,15 @@ def main() -> None:
     procs: list[tuple[str, subprocess.Popen]] = []
 
     try:
-        # Ensure Flutter web builds exist so /dashboard, /media, /dev work by default.
+        # Detect flutter and ensure web builds exist so /dashboard, /media, /dev work by default.
+        flutter_bin = find_flutter_bin()
         sssnl_app_dir = ROOT / "sssnl_app"
         media_controls_dir = ROOT / "sssnl_media_controls"
-        ensure_flutter_web_build(sssnl_app_dir, "dashboard")
-        ensure_flutter_web_build(media_controls_dir, "media_controls")
-
-        flutter_bin = find_flutter_bin()
+        if Path(flutter_bin).name == "flutter" and not Path(flutter_bin).exists():
+            print("[launcher] Flutter not found. Skipping desktop app launch. Serving web (if previously built).")
+        else:
+            ensure_flutter_web_build(sssnl_app_dir, "dashboard", flutter_bin)
+            ensure_flutter_web_build(media_controls_dir, "media_controls", flutter_bin)
 
         # 1) Flask backend (app.py)
         procs.append(
@@ -110,29 +112,30 @@ def main() -> None:
         except Exception:
             pass
 
-        # 2) Flutter dashboard app (sssnl_app)
-        procs.append(
-            (
-                "dashboard",
-                start_process(
+        # 2) Flutter desktop apps (optional). Only start if flutter exists.
+        if Path(flutter_bin).exists() or (Path(flutter_bin).name == "flutter" and os.environ.get("PATH")):
+            procs.append(
+                (
                     "dashboard",
-                    [flutter_bin, "run", "-d", "linux"],
-                    sssnl_app_dir,
-                ),
+                    start_process(
+                        "dashboard",
+                        [flutter_bin, "run", "-d", "linux"],
+                        sssnl_app_dir,
+                    ),
+                )
             )
-        )
-
-        # 3) Flutter media/dev controls app (sssnl_media_controls)
-        procs.append(
-            (
-                "media_controls",
-                start_process(
+            procs.append(
+                (
                     "media_controls",
-                    [flutter_bin, "run", "-d", "linux"],
-                    media_controls_dir,
-                ),
+                    start_process(
+                        "media_controls",
+                        [flutter_bin, "run", "-d", "linux"],
+                        media_controls_dir,
+                    ),
+                )
             )
-        )
+        else:
+            print("[launcher] Flutter binary not available; desktop apps not started. Use web at http://localhost:5656/dashboard, /media, /dev.")
 
         print("[launcher] All processes started. Press Ctrl+C to stop everything.")
 
