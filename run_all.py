@@ -17,21 +17,30 @@ import subprocess
 import sys
 import time
 from pathlib import Path
+import webbrowser
 
 ROOT = Path(__file__).resolve().parent
 
 
 def ensure_flutter_web_build(app_dir: Path, label: str) -> None:
-    """Build Flutter web for the given app if build/web is missing.
+    """Build Flutter web for the given app with correct base href if missing.
 
-    This lets app.py serve /dashboard, /media and /dev by default.
+    Dashboard needs base href `/dashboard/`; media/dev needs `/media/`.
+    Output to distinct folders to avoid clashes.
     """
-    web_index = app_dir / "build" / "web" / "index.html"
+    out_dir = app_dir / "build" / ("web_dashboard" if label == "dashboard" else "web_media")
+    web_index = out_dir / "index.html"
     if web_index.exists():
         return
-    print(f"[launcher] Web build for {label} not found; running 'flutter build web'...")
+    print(f"[launcher] Web build for {label} not found; running 'flutter build web' with base href...")
     try:
-        subprocess.run(["flutter", "build", "web"], cwd=str(app_dir), check=True)
+        base = "/dashboard/" if label == "dashboard" else "/media/"
+        subprocess.run([
+            "flutter", "build", "web",
+            "--base-href", base,
+            "--release",
+            "--output", str(out_dir)
+        ], cwd=str(app_dir), check=True)
     except Exception as exc:  # noqa: BLE001
         print(f"[launcher] Warning: flutter build web failed for {label}: {exc}")
 
@@ -57,6 +66,15 @@ def main() -> None:
                 start_process("backend", [sys.executable, "app.py"], ROOT),
             )
         )
+
+        # Give the backend a moment to bind to port 5656, then open URLs.
+        try:
+            time.sleep(2)
+            webbrowser.open_new_tab("http://localhost:5656/dashboard")
+            webbrowser.open_new_tab("http://localhost:5656/media")
+            webbrowser.open_new_tab("http://localhost:5656/dev")
+        except Exception:
+            pass
 
         # 2) Flutter dashboard app (sssnl_app)
         procs.append(

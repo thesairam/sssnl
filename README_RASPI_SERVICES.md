@@ -184,10 +184,10 @@ If you want the Flutter UIs to run in the browser as well:
 
 ```bash
 cd /home/<user>/sssnl/sssnl_app
-flutter build web
+flutter build web --base-href /dashboard/ --output build/web_dashboard
 
 cd /home/<user>/sssnl/sssnl_media_controls
-flutter build web
+flutter build web --base-href /media/ --output build/web_media
 ```
 
 2. Ensure the backend is running. The routes in `app.py` will now serve the Flutter Web apps:
@@ -198,6 +198,30 @@ flutter build web
 - Media & Dev controls (same Flutter app, different entry paths):
 	- `http://localhost:5656/media` → opens the Media tab (upload/list/delete via `/api/media/*`).
 	- `http://localhost:5656/dev`   → opens the Developer tab (calls `/mock-*`).
+## 6. Enable services at boot and verify
+
+```bash
+sudo systemctl daemon-reload
+sudo systemctl enable sssnl-backend.service
+sudo systemctl enable sssnl-dashboard.service
+sudo systemctl enable sssnl-fetch-message.timer
+
+# Start now (optional)
+sudo systemctl start sssnl-backend.service
+sudo systemctl start sssnl-dashboard.service
+sudo systemctl start sssnl-fetch-message.timer
+
+# Check statuses
+systemctl --user status sssnl-backend.service
+systemctl --user status sssnl-dashboard.service
+systemctl --user status sssnl-fetch-message.timer
+```
+
+To view backend logs:
+
+```bash
+journalctl -u sssnl-backend.service -f
+```
 
 On the production Pi you can simply avoid using the mock controls so
 that real hardware drives the dashboard as intended.

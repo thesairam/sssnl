@@ -84,8 +84,8 @@ except Exception as e:
     print('Warning: media_uploader blueprint not registered:', e)
 
 # Optional path to Flutter Web build of the media/dev controls app.
-DEV_WEB_DIR = os.path.join(os.path.dirname(__file__), 'sssnl_media_controls', 'build', 'web')
-DASHBOARD_WEB_DIR = os.path.join(os.path.dirname(__file__), 'sssnl_app', 'build', 'web')
+DEV_WEB_DIR = os.path.join(os.path.dirname(__file__), 'sssnl_media_controls', 'build', 'web_media')
+DASHBOARD_WEB_DIR = os.path.join(os.path.dirname(__file__), 'sssnl_app', 'build', 'web_dashboard')
 
 # Shared values
 current_temp = "--"

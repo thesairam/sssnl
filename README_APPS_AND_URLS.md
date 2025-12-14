@@ -30,6 +30,7 @@ You have two options; both use the same backend APIs:
   - Desktop dev: `cd sssnl_app && flutter run -d linux`
   - Web build (served by app.py):
     - URL: `http://localhost:5656/dashboard`
+    - Note: Built with base href `/dashboard/` and served from `sssnl_app/build/web_dashboard`.
 
 ### Front‑end B: Media & Developer controls (single Flutter app)
 
@@ -43,6 +44,7 @@ One Flutter app (`sssnl_media_controls`) used in multiple ways:
   - URLs:
     - `http://localhost:5656/media` → same app, opens **Media** tab.
     - `http://localhost:5656/dev`   → same app, opens **Developer** tab.
+    - Note: Built with base href `/media/` and served from `sssnl_media_controls/build/web_media`.
 
 There is also a minimal HTML page from media_admin.py at:
 
@@ -122,10 +124,10 @@ If you build the web versions:
 
 ```bash
 cd /home/<user>/sssnl/sssnl_app
-flutter build web
+flutter build web --base-href /dashboard/ --output build/web_dashboard
 
 cd /home/<user>/sssnl/sssnl_media_controls
-flutter build web
+flutter build web --base-href /media/ --output build/web_media
 ```
 
 then app.py will serve them at:
