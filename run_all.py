@@ -18,7 +18,7 @@ import sys
 import time
 from pathlib import Path
 import os
-import webbrowser
+import platform
 
 ROOT = Path(__file__).resolve().parent
 
@@ -52,11 +52,20 @@ def find_flutter_bin() -> str:
     """Locate the flutter executable reliably across setups.
 
     Order:
+    0. FLUTTER_BIN env override
     1. PATH: use "flutter" if available
     2. $FLUTTER_HOME/bin/flutter if set
     3. ~/flutter/bin/flutter if present
     4. snap: /snap/bin/flutter
     """
+    # 0. Explicit override
+    override = os.environ.get("FLUTTER_BIN")
+    if override:
+        cand = Path(override)
+        if cand.exists():
+            return str(cand)
+        else:
+            print(f"[launcher] FLUTTER_BIN override set but not found: {override}")
     # 1. PATH
     from shutil import which
     exe = which("flutter")
@@ -81,6 +90,23 @@ def find_flutter_bin() -> str:
     return "flutter"
 
 
+def should_skip_flutter_desktop() -> bool:
+    """Determine whether to skip launching Flutter desktop apps.
+
+    Skips if:
+    - NO_FLUTTER_DESKTOP env is set to 1/true/yes
+    - Architecture appears to be ARM (Raspberry Pi), since Flutter Linux desktop
+      is generally unsupported on Pi. You can override by unsetting the env.
+    """
+    val = os.environ.get("NO_FLUTTER_DESKTOP", "").strip().lower()
+    if val in ("1", "true", "yes"):  # explicit opt-out
+        return True
+    arch = platform.machine().lower()
+    if arch.startswith("arm") or arch in ("aarch64", "arm64"):
+        return True
+    return False
+
+
 def main() -> None:
     procs: list[tuple[str, subprocess.Popen]] = []
 
@@ -89,9 +115,11 @@ def main() -> None:
         flutter_bin = find_flutter_bin()
         sssnl_app_dir = ROOT / "sssnl_app"
         media_controls_dir = ROOT / "sssnl_media_controls"
+        skip_desktop = should_skip_flutter_desktop()
         if Path(flutter_bin).name == "flutter" and not Path(flutter_bin).exists():
-            print("[launcher] Flutter not found. Skipping desktop app launch. Serving web (if previously built).")
+            print("[launcher] Flutter not found. Skipping builds/desktop apps. Serve prebuilt web if available.")
         else:
+            # Build web bundles with correct base-hrefs when flutter is available
             ensure_flutter_web_build(sssnl_app_dir, "dashboard", flutter_bin)
             ensure_flutter_web_build(media_controls_dir, "media_controls", flutter_bin)
 
@@ -103,17 +131,11 @@ def main() -> None:
             )
         )
 
-        # Give the backend a moment to bind to port 5656, then open URLs.
-        try:
-            time.sleep(2)
-            webbrowser.open_new_tab("http://localhost:5656/dashboard")
-            webbrowser.open_new_tab("http://localhost:5656/media")
-            webbrowser.open_new_tab("http://localhost:5656/dev")
-        except Exception:
-            pass
+        # Give the backend a moment to bind to port 5656 (optional wait for ready)
+        time.sleep(2)
 
-        # 2) Flutter desktop apps (optional). Only start if flutter exists.
-        if Path(flutter_bin).exists() or (Path(flutter_bin).name == "flutter" and os.environ.get("PATH")):
+        # 2) Flutter desktop apps (optional). Only start if flutter exists and not skipped.
+        if not skip_desktop and (Path(flutter_bin).exists() or (Path(flutter_bin).name == "flutter" and os.environ.get("PATH"))):
             procs.append(
                 (
                     "dashboard",
@@ -135,7 +157,7 @@ def main() -> None:
                 )
             )
         else:
-            print("[launcher] Flutter binary not available; desktop apps not started. Use web at http://localhost:5656/dashboard, /media, /dev.")
+            print("[launcher] Flutter desktop skipped (NO_FLUTTER_DESKTOP or ARM/Flutter missing). Use web at http://localhost:5656/dashboard, /media, /dev.")
 
         print("[launcher] All processes started. Press Ctrl+C to stop everything.")
 
