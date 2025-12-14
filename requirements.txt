@@ -5,3 +5,13 @@ itsdangerous==2.2.0
 Jinja2==3.1.6
 MarkupSafe==3.0.3
 Werkzeug==3.1.4
+
+# Raspberry Pi + sensors
+RPi.GPIO==0.7.1
+Adafruit-Blinka==8.35.0
+Adafruit-PlatformDetect==3.69.0
+Adafruit-PureIO==1.1.11
+adafruit-circuitpython-dht==4.0.4
+
+# Utilities
+requests==2.32.3

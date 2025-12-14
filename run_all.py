@@ -17,6 +17,7 @@ import subprocess
 import sys
 import time
 from pathlib import Path
+import os
 import webbrowser
 
 ROOT = Path(__file__).resolve().parent
@@ -47,6 +48,37 @@ def ensure_flutter_web_build(app_dir: Path, label: str) -> None:
 def start_process(name: str, args: list[str], cwd: Path) -> subprocess.Popen:
     print(f"[launcher] Starting {name} in {cwd} -> {' '.join(args)}")
     return subprocess.Popen(args, cwd=str(cwd))
+def find_flutter_bin() -> str:
+    """Locate the flutter executable reliably across setups.
+
+    Order:
+    1. PATH: use "flutter" if available
+    2. $FLUTTER_HOME/bin/flutter if set
+    3. ~/flutter/bin/flutter if present
+    4. snap: /snap/bin/flutter
+    """
+    # 1. PATH
+    from shutil import which
+    exe = which("flutter")
+    if exe:
+        return exe
+    # 2. FLUTTER_HOME
+    fh = os.environ.get("FLUTTER_HOME")
+    if fh:
+        cand = Path(fh) / "bin" / "flutter"
+        if cand.exists():
+            return str(cand)
+    # 3. ~/flutter/bin/flutter
+    home = Path.home()
+    cand = home / "flutter" / "bin" / "flutter"
+    if cand.exists():
+        return str(cand)
+    # 4. snap
+    cand = Path("/snap/bin/flutter")
+    if cand.exists():
+        return str(cand)
+    # Fallback to plain name; will fail with a clear message
+    return "flutter"
 
 
 def main() -> None:
@@ -58,6 +90,8 @@ def main() -> None:
         media_controls_dir = ROOT / "sssnl_media_controls"
         ensure_flutter_web_build(sssnl_app_dir, "dashboard")
         ensure_flutter_web_build(media_controls_dir, "media_controls")
+
+        flutter_bin = find_flutter_bin()
 
         # 1) Flask backend (app.py)
         procs.append(
@@ -82,7 +116,7 @@ def main() -> None:
                 "dashboard",
                 start_process(
                     "dashboard",
-                    ["flutter", "run", "-d", "linux"],
+                    [flutter_bin, "run", "-d", "linux"],
                     sssnl_app_dir,
                 ),
             )
@@ -94,7 +128,7 @@ def main() -> None:
                 "media_controls",
                 start_process(
                     "media_controls",
-                    ["flutter", "run", "-d", "linux"],
+                    [flutter_bin, "run", "-d", "linux"],
                     media_controls_dir,
                 ),
             )
