@@ -1,14 +1,18 @@
 #!/usr/bin/env python3
-"""Convenience launcher to start backend + both Flutter apps.
+"""Convenience launcher to start backend and prepare Flutter Web bundles.
 
 Usage (from repo root):
   python run_all.py
 
 Assumptions:
 - You're in the correct virtualenv so Flask deps are installed.
-- `flutter` is on PATH.
-- This is for development on Ubuntu / desktop; for Pi deployment,
-  consider building Flutter binaries and using systemd instead.
+- `flutter` is on PATH if you want to (re)build web bundles; otherwise
+    prebuilt assets under sssnl_app/build/web_dashboard and
+    sssnl_media_controls/build/web_media will be served.
+-
+This is oriented for development; for Pi deployment, use systemd to
+start `app.py` and point a browser (Chromium kiosk or any device) at
+`http://<pi-ip>:5656/` for the HTML dashboard, or at `/dashboard`, `/media`.
 """
 
 from __future__ import annotations
@@ -18,7 +22,6 @@ import sys
 import time
 from pathlib import Path
 import os
-import platform
 
 ROOT = Path(__file__).resolve().parent
 
@@ -90,21 +93,7 @@ def find_flutter_bin() -> str:
     return "flutter"
 
 
-def should_skip_flutter_desktop() -> bool:
-    """Determine whether to skip launching Flutter desktop apps.
-
-    Skips if:
-    - NO_FLUTTER_DESKTOP env is set to 1/true/yes
-    - Architecture appears to be ARM (Raspberry Pi), since Flutter Linux desktop
-      is generally unsupported on Pi. You can override by unsetting the env.
-    """
-    val = os.environ.get("NO_FLUTTER_DESKTOP", "").strip().lower()
-    if val in ("1", "true", "yes"):  # explicit opt-out
-        return True
-    arch = platform.machine().lower()
-    if arch.startswith("arm") or arch in ("aarch64", "arm64"):
-        return True
-    return False
+# Desktop Flutter apps are no longer launched by this helper.
 
 
 def main() -> None:
@@ -115,9 +104,8 @@ def main() -> None:
         flutter_bin = find_flutter_bin()
         sssnl_app_dir = ROOT / "sssnl_app"
         media_controls_dir = ROOT / "sssnl_media_controls"
-        skip_desktop = should_skip_flutter_desktop()
         if Path(flutter_bin).name == "flutter" and not Path(flutter_bin).exists():
-            print("[launcher] Flutter not found. Skipping builds/desktop apps. Serve prebuilt web if available.")
+            print("[launcher] Flutter not found. Skipping web builds. Serving prebuilt web if available.")
         else:
             # Build web bundles with correct base-hrefs when flutter is available
             ensure_flutter_web_build(sssnl_app_dir, "dashboard", flutter_bin)
@@ -134,30 +122,8 @@ def main() -> None:
         # Give the backend a moment to bind to port 5656 (optional wait for ready)
         time.sleep(2)
 
-        # 2) Flutter desktop apps (optional). Only start if flutter exists and not skipped.
-        if not skip_desktop and (Path(flutter_bin).exists() or (Path(flutter_bin).name == "flutter" and os.environ.get("PATH"))):
-            procs.append(
-                (
-                    "dashboard",
-                    start_process(
-                        "dashboard",
-                        [flutter_bin, "run", "-d", "linux"],
-                        sssnl_app_dir,
-                    ),
-                )
-            )
-            procs.append(
-                (
-                    "media_controls",
-                    start_process(
-                        "media_controls",
-                        [flutter_bin, "run", "-d", "linux"],
-                        media_controls_dir,
-                    ),
-                )
-            )
-        else:
-            print("[launcher] Flutter desktop skipped (NO_FLUTTER_DESKTOP or ARM/Flutter missing). Use web at http://localhost:5656/dashboard, /media, /dev.")
+        # 2) No desktop app launch — use web routes at /dashboard, /media, /dev
+        print("[launcher] Web routes: http://localhost:5656/dashboard, /media, /dev.")
 
         print("[launcher] All processes started. Press Ctrl+C to stop everything.")
 

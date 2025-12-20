@@ -1,6 +1,6 @@
-# SSSNL on Raspberry Pi (Build + Run)
+# SSSNL on Raspberry Pi (Web‑Only)
 
-This guide shows how to clone, install, and run the SSSNL stack on a Raspberry Pi. It also includes optional systemd services so everything starts at boot.
+This document has been streamlined. For the full services + background run guide, see README_SERVICES.md. For general setup and URLs, see README.md.
 
 Assumptions:
 - Repo will be cloned to `/home/<user>/sssnl`.
@@ -32,7 +32,7 @@ pip install -r requirements.txt
 
 # 4) Run backend
 python app.py
-# Visit http://localhost:5656/ (or from another device: http://<pi-ip>:5656/)
+# Visit http://localhost:5656/dashboard (or from another device: http://<pi-ip>:5656/dashboard)
 ```
 
 If you see “dashboard running” logs and the page loads, you’re good. Stop with Ctrl+C to continue with the boot services below.
@@ -72,7 +72,7 @@ To test manually:
 
 ```bash
 python app.py
-# Open http://localhost:5656/ in a browser (or http://<pi-ip>:5656/)
+# Open http://localhost:5656/dashboard in a browser (or http://<pi-ip>:5656/dashboard)
 ```
 
 Stop it (Ctrl+C) before configuring systemd.
@@ -141,7 +141,7 @@ Type=simple
 User=<user>
 Environment=DISPLAY=:0
 Environment=XAUTHORITY=/home/<user>/.Xauthority
-ExecStart=/usr/bin/chromium-browser --kiosk --incognito http://localhost:5656/
+ExecStart=/usr/bin/chromium-browser --kiosk --incognito http://localhost:5656/dashboard
 Restart=always
 
 [Install]
@@ -156,7 +156,7 @@ sudo systemctl enable sssnl-dashboard.service
 sudo systemctl start sssnl-dashboard.service
 ```
 
-On boot, the Pi will start `sssnl-backend` and open Chromium fullscreen at `http://localhost:5656/`.
+On boot, the Pi will start `sssnl-backend` and open Chromium fullscreen at `http://localhost:5656/dashboard`.
 
 > Prefer a pure desktop app? See the Flutter sections below.
 
@@ -238,24 +238,17 @@ Note: If `flutter` isn’t installed on the Pi, you can build on a dev machine a
 
 ---
 
-## 6. Optional: Flutter Desktop on Raspberry Pi
+## Web‑Only Approach (Recommended)
 
-For most setups, using Chromium kiosk with the Flask HTML UI is simplest. If you want native Flutter desktop apps on Pi (arm64):
+This project now targets the Web only. Build the Flutter Web bundles (optional) and use any browser to access:
 
-```bash
-sudo apt install -y clang cmake ninja-build pkg-config libgtk-3-dev liblzma-dev
-# Install Flutter for arm64 and enable linux-desktop
-flutter config --enable-linux-desktop
+- HTML dashboard: `http://<host>:5656/`
+- Flutter Web dashboard: `http://<host>:5656/dashboard`
+- Flutter Web media/dev: `http://<host>:5656/media` and `http://<host>:5656/dev`
 
-# Build release binaries
-cd /home/<user>/sssnl/sssnl_app
-flutter build linux --release
+No desktop (native) Flutter builds are required or supported in this setup.
 
-cd /home/<user>/sssnl/sssnl_media_controls
-flutter build linux --release
-```
-
-Update the kiosk service to launch the built binary instead of Chromium, or create separate services for each app. On 32‑bit Pi OS, Flutter desktop is not supported; use the Web approach.
+See README_SERVICES.md for systemd units (backend + Chromium kiosk + daily fetch) and logs.
 
 ---
 

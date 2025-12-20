@@ -1,10 +1,10 @@
 #!/usr/bin/env bash
-# SSSNL Raspberry Pi setup + run helper
+# SSSNL Raspberry Pi setup + run helper (Web-only)
 # - Installs apt dependencies
 # - Creates Python venv and installs pip requirements
-# - Builds Flutter Web (dashboard + media) and Desktop (arm64) if flutter exists
-# - Starts Flask backend and launches desktop apps
-# - Does NOT auto-open the web UI
+# - Builds Flutter Web (dashboard + media) if flutter exists
+# - Starts Flask backend
+# - Does NOT auto-open the web UI; no desktop app builds
 
 set -euo pipefail
 
@@ -45,12 +45,7 @@ ensure_apt_pkg python3
 ensure_apt_pkg python3-venv
 ensure_apt_pkg python3-pip
 ensure_apt_pkg libgpiod2
-ensure_apt_pkg clang
-ensure_apt_pkg cmake
-ensure_apt_pkg ninja-build
-ensure_apt_pkg pkg-config
-ensure_apt_pkg libgtk-3-dev
-ensure_apt_pkg liblzma-dev
+# Desktop build deps removed (web-only). Keep Chromium optional.
 CHROMIUM_PKG="$(choose_chromium_pkg)"
 ensure_apt_pkg "$CHROMIUM_PKG"
 
@@ -90,52 +85,7 @@ if [[ "$HAVE_FLUTTER" -eq 1 ]]; then
   popd >/dev/null
 fi
 
-# 5) Build Flutter Linux desktop (arm64 recommended)
-APP_BIN=""
-MEDIA_BIN=""
-if [[ "$HAVE_FLUTTER" -eq 1 ]]; then
-  if [[ "$ARCH" == "aarch64" ]]; then
-    log "Building Flutter desktop (linux) for arm64..."
-    pushd "$ROOT_DIR/sssnl_app" >/dev/null
-    if flutter build linux --release; then
-      :
-    else
-      warn "Flutter desktop build failed for sssnl_app."
-    fi
-    popd >/dev/null
-
-    pushd "$ROOT_DIR/sssnl_media_controls" >/dev/null
-    if flutter build linux --release; then
-      :
-    else
-      warn "Flutter desktop build failed for sssnl_media_controls."
-    fi
-    popd >/dev/null
-
-    # Try to locate the produced binaries
-    find_binary() {
-      local proj_dir="$1"
-      local name="$2"
-      local found
-      found=$(find "$proj_dir/build/linux" -type f -path "*/release/bundle/*" -name "$name" 2>/dev/null | head -n1 || true)
-      echo "$found"
-    }
-
-    APP_BIN="$(find_binary "$ROOT_DIR/sssnl_app" sssnl_app)"
-    MEDIA_BIN="$(find_binary "$ROOT_DIR/sssnl_media_controls" sssnl_media_controls)"
-
-    if [[ -z "$APP_BIN" ]]; then
-      warn "Could not find sssnl_app desktop binary."
-    fi
-    if [[ -z "$MEDIA_BIN" ]]; then
-      warn "Could not find sssnl_media_controls desktop binary."
-    fi
-  else
-    warn "Non-64bit Pi detected ($ARCH). Flutter desktop is not supported; skipping desktop binaries."
-  fi
-fi
-
-# 6) Launch processes (backend + desktop apps). Do NOT open web.
+# 5) Launch backend only. Do NOT open web.
 PIDS=()
 cleanup() {
   log "Stopping child processes..."
@@ -152,18 +102,6 @@ source "$VENV_DIR/bin/activate"
 "$PYBIN" "$ROOT_DIR/app.py" &
 PIDS+=("$!")
 deactivate || true
-
-if [[ -n "$APP_BIN" && -x "$APP_BIN" ]]; then
-  log "Launching desktop: sssnl_app"
-  "$APP_BIN" &
-  PIDS+=("$!")
-fi
-
-if [[ -n "$MEDIA_BIN" && -x "$MEDIA_BIN" ]]; then
-  log "Launching desktop: sssnl_media_controls"
-  "$MEDIA_BIN" &
-  PIDS+=("$!")
-fi
 
 log "All started. Web builds (if built) are served by Flask at:"
 log "  http://localhost:5656/dashboard"

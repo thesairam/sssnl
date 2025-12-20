@@ -37,7 +37,7 @@ import subprocess
 import time
 import threading
 import os, shutil
-from flask import Flask, render_template_string, jsonify, request, send_from_directory
+from flask import Flask, render_template_string, jsonify, request, send_from_directory, redirect
 
 # -------------------
 # CONFIG
@@ -402,14 +402,8 @@ window.addEventListener('load', ()=>{
 
 @app.route("/")
 def index():
-    # supply playlist to template
-    return render_template_string(
-        HTML_TEMPLATE,
-        temp=current_temp,
-        hum=current_hum,
-        motion_status=motion_status_msg,
-        # playlist now fetched client-side from /playlist
-    )
+    # Redirect root to Flutter Web dashboard for a web-only experience
+    return redirect('/dashboard')
 
 
 @app.route('/playlist')
@@ -697,5 +691,5 @@ if __name__ == "__main__":
 
     # Client will fetch playlist via /playlist; no need to build here
 
-    print("🚀 Dashboard running on http://0.0.0.0:5656 (single-playlist mode)")
+    print("🚀 Web server on http://0.0.0.0:5656 — use /dashboard, /media, /dev")
     app.run(host="0.0.0.0", port=5656)
