@@ -1,4 +1,4 @@
-from flask import Blueprint, request, jsonify, current_app, url_for
+from flask import Blueprint, request, jsonify, current_app, url_for, session
 import os
 import pathlib
 import urllib.request
@@ -10,7 +10,7 @@ bp = Blueprint('media_admin', __name__)
 # Optional API key configured via environment; if not set, auth is disabled.
 API_KEY = os.environ.get('SSSNL_MEDIA_API_KEY')
 
-ALLOWED_TARGETS = {'gallery', 'news', 'message', 'videos', 'media'}
+ALLOWED_TARGETS = {'media'}
 ALLOWED_EXT = {'jpg', 'jpeg', 'png', 'gif', 'webp', 'mp4', 'mov', 'm4v', 'avi', 'webm'}
 
 
@@ -20,27 +20,34 @@ def is_allowed_filename(filename: str) -> bool:
     return ext in ALLOWED_EXT
 
 
-def require_api_key(req):
-    # If API_KEY isn't set, allow all (trusted local network mode)
-    if not API_KEY:
-        return True
-    key = req.headers.get('X-API-KEY') or req.args.get('api_key')
-    if not key and req.method == 'POST':
-        data = req.get_json(silent=True) or {}
-        key = req.form.get('api_key') or data.get('api_key')
-    return key == API_KEY
+def is_authenticated(req):
+    """Allow if API key matches or a user is logged in via session.
+
+    When no API key is configured, require session user for modifying operations.
+    """
+    # API key path
+    if API_KEY:
+        key = req.headers.get('X-API-KEY') or req.args.get('api_key')
+        if not key and req.method == 'POST':
+            data = req.get_json(silent=True) or {}
+            key = req.form.get('api_key') or data.get('api_key')
+        if key == API_KEY:
+            return True
+    # Session path
+    return session.get('user_id') is not None
 
 
 def static_target_dir(target: str) -> str:
     root = pathlib.Path(current_app.root_path) / 'static'
-    dest = root / target
+    user = session.get('user_id') or 'anon'
+    dest = root / target / user
     dest.mkdir(parents=True, exist_ok=True)
     return str(dest)
 
 
 @bp.route('/upload', methods=['POST'])
 def upload_file():
-    if not require_api_key(request):
+    if not is_authenticated(request):
         return jsonify({'error': 'unauthorized'}), 401
     target = request.form.get('target', 'media')
     if target not in ALLOWED_TARGETS:
@@ -64,7 +71,8 @@ def upload_file():
             dest_path = os.path.join(dest_dir, filename)
             i += 1
         f.save(dest_path)
-        saved.append(url_for('static', filename=f"{target}/{filename}", _external=False))
+        user = session.get('user_id') or 'anon'
+        saved.append(url_for('static', filename=f"{target}/{user}/{filename}", _external=False))
     if not saved:
         return jsonify({'error': 'no valid files uploaded'}), 400
     return jsonify({'saved': saved}), 201
@@ -72,13 +80,16 @@ def upload_file():
 
 @bp.route('/files', methods=['GET'])
 def list_files():
-    root = pathlib.Path(current_app.root_path) / 'static' / 'media'
+    if not is_authenticated(request):
+        return jsonify({'error': 'unauthorized'}), 401
+    user = session.get('user_id') or 'anon'
+    root = pathlib.Path(current_app.root_path) / 'static' / 'media' / user
     files = []
     if root.exists():
         for p in sorted(root.iterdir()):
             if p.is_file():
                 name = p.name
-                url = url_for('static', filename=f"media/{name}", _external=False)
+                url = url_for('static', filename=f"media/{user}/{name}", _external=False)
                 lower = name.lower()
                 typ = 'image' if lower.endswith(('.png', '.jpg', '.jpeg', '.gif', '.webp')) else 'video'
                 files.append({'name': name, 'url': url, 'type': typ})
@@ -87,13 +98,14 @@ def list_files():
 
 @bp.route('/delete', methods=['POST'])
 def delete_file():
-    if not require_api_key(request):
+    if not is_authenticated(request):
         return jsonify({'error': 'unauthorized'}), 401
     data = request.get_json(force=True, silent=True) or {}
     filename = secure_filename(data.get('filename') or '')
     if not filename:
         return jsonify({'error': 'filename required'}), 400
-    path = pathlib.Path(current_app.root_path) / 'static' / 'media' / filename
+    user = session.get('user_id') or 'anon'
+    path = pathlib.Path(current_app.root_path) / 'static' / 'media' / user / filename
     if not path.exists() or not path.is_file():
         return jsonify({'error': 'not found'}), 404
     try:
@@ -105,7 +117,7 @@ def delete_file():
 
 @bp.route('/fetch', methods=['POST'])
 def fetch_remote():
-    if not require_api_key(request):
+    if not is_authenticated(request):
         return jsonify({'error': 'unauthorized'}), 401
     data = request.get_json(force=True, silent=True) or {}
     url = data.get('url')
@@ -131,7 +143,8 @@ def fetch_remote():
             shutil.copyfileobj(resp, out)
     except Exception as e:
         return jsonify({'error': 'download_failed', 'detail': str(e)}), 400
-    return jsonify({'saved': [url_for('static', filename=f"{target}/{filename}", _external=False)]}), 201
+    user = session.get('user_id') or 'anon'
+    return jsonify({'saved': [url_for('static', filename=f"{target}/{user}/{filename}", _external=False)]}), 201
 
 
 @bp.route('/info', methods=['GET'])

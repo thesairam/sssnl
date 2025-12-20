@@ -51,16 +51,30 @@ class _LoginScreenState extends State<_LoginScreen> {
   final _userCtrl = TextEditingController();
   final _passCtrl = TextEditingController();
   String? _error;
+  bool _loading = false;
 
   void _submit() {
-    setState(() => _error = null);
-    if (_userCtrl.text == kDevUsername && _passCtrl.text == kDevPassword) {
-      Navigator.of(context).pushReplacement(
-        MaterialPageRoute(builder: (_) => const _DevControlsPage()),
-      );
-    } else {
-      setState(() => _error = 'Invalid credentials');
-    }
+    setState(() { _error = null; _loading = true; });
+    http
+        .post(
+          Uri.parse('$kBackendBaseUrl/api/auth/login'),
+          headers: {'Content-Type': 'application/json'},
+          body: json.encode({'username': _userCtrl.text.trim(), 'password': _passCtrl.text}),
+        )
+        .timeout(const Duration(seconds: 10))
+        .then((resp) {
+      if (resp.statusCode == 200) {
+        Navigator.of(context).pushReplacement(
+          MaterialPageRoute(builder: (_) => const _DevControlsPage()),
+        );
+      } else {
+        setState(() { _error = 'Sign in failed (${resp.statusCode})'; });
+      }
+    }).catchError((e) {
+      setState(() { _error = 'Sign in error: $e'; });
+    }).whenComplete(() {
+      setState(() { _loading = false; });
+    });
   }
 
   @override
@@ -112,6 +126,10 @@ class _LoginScreenState extends State<_LoginScreen> {
                     onPressed: _submit,
                     child: const Text('Enter'),
                   ),
+                  if (_loading) ...[
+                    const SizedBox(height: 12),
+                    const Center(child: SizedBox(width: 16, height: 16, child: CircularProgressIndicator(strokeWidth: 2))),
+                  ],
                 ],
               ),
             ),
@@ -148,11 +166,76 @@ class _MediaManagerPage extends StatefulWidget {
 class _MediaManagerPageState extends State<_MediaManagerPage> {
   List<_MediaFile> _files = const [];
   bool _loading = false;
+  bool _authed = false;
+  bool _authLoading = false;
+  String? _authError;
+  final _userCtrl = TextEditingController();
+  final _passCtrl = TextEditingController();
+  // User self-management controllers
+  final _oldPassCtrl = TextEditingController();
+  final _newPassCtrl = TextEditingController();
+  final _newUsernameCtrl = TextEditingController();
+  final _verifyPassCtrl = TextEditingController();
+  String? _userMsg;
 
   @override
   void initState() {
     super.initState();
-    _refresh();
+    _checkAuth().then((_) { if (_authed) _refresh(); });
+  }
+
+  Future<void> _checkAuth() async {
+    setState(() { _authLoading = true; _authError = null; });
+    try {
+      final resp = await http.get(Uri.parse('$kBackendBaseUrl/api/auth/me')).timeout(const Duration(seconds: 10));
+      setState(() { _authed = resp.statusCode == 200; });
+    } catch (_) {
+      setState(() { _authed = false; });
+    } finally {
+      setState(() { _authLoading = false; });
+    }
+  }
+
+  Future<void> _login() async {
+    setState(() { _authLoading = true; _authError = null; });
+    try {
+      final resp = await http.post(
+        Uri.parse('$kBackendBaseUrl/api/auth/login'),
+        headers: {'Content-Type': 'application/json'},
+        body: json.encode({'username': _userCtrl.text.trim(), 'password': _passCtrl.text}),
+      ).timeout(const Duration(seconds: 10));
+      if (resp.statusCode == 200) {
+        setState(() { _authed = true; });
+        await _refresh();
+      } else {
+        setState(() { _authError = 'Login failed (${resp.statusCode})'; });
+      }
+    } catch (e) {
+      setState(() { _authError = 'Login error: $e'; });
+    } finally {
+      setState(() { _authLoading = false; });
+    }
+  }
+
+  Future<void> _signup() async {
+    setState(() { _authLoading = true; _authError = null; });
+    try {
+      final resp = await http.post(
+        Uri.parse('$kBackendBaseUrl/api/auth/signup'),
+        headers: {'Content-Type': 'application/json'},
+        body: json.encode({'username': _userCtrl.text.trim(), 'password': _passCtrl.text}),
+      ).timeout(const Duration(seconds: 10));
+      if (resp.statusCode == 200) {
+        setState(() { _authed = true; });
+        await _refresh();
+      } else {
+        setState(() { _authError = 'Signup failed (${resp.statusCode})'; });
+      }
+    } catch (e) {
+      setState(() { _authError = 'Signup error: $e'; });
+    } finally {
+      setState(() { _authLoading = false; });
+    }
   }
 
   Future<void> _refresh() async {
@@ -182,6 +265,10 @@ class _MediaManagerPageState extends State<_MediaManagerPage> {
   Future<void> _pickAndUpload() async {
     final result = await FilePicker.platform.pickFiles(allowMultiple: true, withData: true);
     if (result == null || result.files.isEmpty) return;
+    if (!_authed) {
+      setState(() { _authError = 'Please sign in to upload.'; });
+      return;
+    }
 
     for (final file in result.files) {
       final uri = Uri.parse('$kBackendBaseUrl/api/media/upload');
@@ -241,13 +328,106 @@ class _MediaManagerPageState extends State<_MediaManagerPage> {
     }
   }
 
+  Future<void> _logout() async {
+    try {
+      final resp = await http.post(Uri.parse('$kBackendBaseUrl/api/auth/logout')).timeout(const Duration(seconds: 10));
+      if (resp.statusCode == 200) {
+        setState(() {
+          _authed = false;
+          _files = const [];
+          _userMsg = 'Signed out.';
+        });
+      } else {
+        setState(() { _userMsg = 'Logout failed (${resp.statusCode})'; });
+      }
+    } catch (e) {
+      setState(() { _userMsg = 'Logout error: $e'; });
+    }
+  }
+
+  Future<void> _changePassword() async {
+    setState(() { _userMsg = null; });
+    try {
+      final resp = await http.post(
+        Uri.parse('$kBackendBaseUrl/api/user/change_password'),
+        headers: {'Content-Type': 'application/json'},
+        body: json.encode({'old_password': _oldPassCtrl.text, 'new_password': _newPassCtrl.text}),
+      ).timeout(const Duration(seconds: 10));
+      setState(() {
+        _userMsg = resp.statusCode == 200 ? 'Password updated.' : 'Update failed (${resp.statusCode})';
+      });
+      if (resp.statusCode == 200) {
+        _oldPassCtrl.clear();
+        _newPassCtrl.clear();
+      }
+    } catch (e) {
+      setState(() { _userMsg = 'Update error: $e'; });
+    }
+  }
+
+  Future<void> _changeUsername() async {
+    setState(() { _userMsg = null; });
+    try {
+      final resp = await http.post(
+        Uri.parse('$kBackendBaseUrl/api/user/change_username'),
+        headers: {'Content-Type': 'application/json'},
+        body: json.encode({'new_username': _newUsernameCtrl.text.trim().toLowerCase(), 'password': _verifyPassCtrl.text}),
+      ).timeout(const Duration(seconds: 10));
+      if (resp.statusCode == 200) {
+        setState(() { _userMsg = 'Username updated.'; });
+        _newUsernameCtrl.clear();
+        _verifyPassCtrl.clear();
+        await _refresh();
+      } else if (resp.statusCode == 409) {
+        setState(() { _userMsg = 'Username already exists.'; });
+      } else {
+        setState(() { _userMsg = 'Update failed (${resp.statusCode})'; });
+      }
+    } catch (e) {
+      setState(() { _userMsg = 'Update error: $e'; });
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(title: const Text('SSSNL Media Manager')),
       body: Column(
         children: [
-          Padding(
+          if (!_authed) Padding(
+            padding: const EdgeInsets.all(16),
+            child: Card(
+              color: const Color(0xFF020617),
+              child: Padding(
+                padding: const EdgeInsets.all(16),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  children: [
+                    const Text('Sign in or Sign up', style: TextStyle(fontSize: 18, fontWeight: FontWeight.w600)),
+                    const SizedBox(height: 12),
+                    TextField(controller: _userCtrl, decoration: const InputDecoration(labelText: 'Username')),
+                    const SizedBox(height: 8),
+                    TextField(controller: _passCtrl, decoration: const InputDecoration(labelText: 'Password'), obscureText: true),
+                    const SizedBox(height: 12),
+                    Row(children: [
+                      ElevatedButton(onPressed: _authLoading ? null : _login, child: const Text('Sign In')),
+                      const SizedBox(width: 12),
+                      OutlinedButton(onPressed: _authLoading ? null : _signup, child: const Text('Sign Up')),
+                      if (_authLoading) ...[
+                        const SizedBox(width: 12),
+                        const SizedBox(width: 16, height: 16, child: CircularProgressIndicator(strokeWidth: 2)),
+                      ]
+                    ]),
+                    if (_authError != null) ...[
+                      const SizedBox(height: 8),
+                      Text(_authError!, style: const TextStyle(color: Colors.redAccent, fontSize: 12)),
+                    ]
+                  ],
+                ),
+              ),
+            ),
+          ),
+          if (_authed) Padding(
             padding: const EdgeInsets.all(12),
             child: Row(
               children: [
@@ -262,6 +442,12 @@ class _MediaManagerPageState extends State<_MediaManagerPage> {
                   icon: const Icon(Icons.refresh),
                   label: const Text('Refresh'),
                 ),
+                const SizedBox(width: 12),
+                OutlinedButton.icon(
+                  onPressed: _logout,
+                  icon: const Icon(Icons.logout),
+                  label: const Text('Logout'),
+                ),
                 if (_loading) ...[
                   const SizedBox(width: 12),
                   const SizedBox(
@@ -273,10 +459,47 @@ class _MediaManagerPageState extends State<_MediaManagerPage> {
               ],
             ),
           ),
+          if (_authed) Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 16),
+            child: Card(
+              color: const Color(0xFF020617),
+              child: Padding(
+                padding: const EdgeInsets.all(12),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  children: [
+                    const Text('User Settings', style: TextStyle(fontSize: 16, fontWeight: FontWeight.w600)),
+                    const SizedBox(height: 8),
+                    Row(children: [
+                      Expanded(child: TextField(controller: _oldPassCtrl, decoration: const InputDecoration(labelText: 'Current Password'), obscureText: true)),
+                      const SizedBox(width: 8),
+                      Expanded(child: TextField(controller: _newPassCtrl, decoration: const InputDecoration(labelText: 'New Password'), obscureText: true)),
+                      const SizedBox(width: 8),
+                      ElevatedButton(onPressed: _changePassword, child: const Text('Change Password')),
+                    ]),
+                    const SizedBox(height: 8),
+                    Row(children: [
+                      Expanded(child: TextField(controller: _newUsernameCtrl, decoration: const InputDecoration(labelText: 'New Username'))),
+                      const SizedBox(width: 8),
+                      Expanded(child: TextField(controller: _verifyPassCtrl, decoration: const InputDecoration(labelText: 'Password (verify)'), obscureText: true)),
+                      const SizedBox(width: 8),
+                      ElevatedButton(onPressed: _changeUsername, child: const Text('Change Username')),
+                    ]),
+                    if (_userMsg != null) ...[
+                      const SizedBox(height: 8),
+                      Text(_userMsg!, style: const TextStyle(fontSize: 12, color: Colors.white70)),
+                    ],
+                  ],
+                ),
+              ),
+            ),
+          ),
           Expanded(
-            child: _files.isEmpty
-                ? const Center(child: Text('No media files found'))
-                : GridView.builder(
+            child: !_authed
+                ? const Center(child: Text('Please sign in to view your media'))
+                : _files.isEmpty
+                    ? const Center(child: Text('No media files found'))
+                    : GridView.builder(
                     padding: const EdgeInsets.all(12),
                     gridDelegate:
                         const SliverGridDelegateWithFixedCrossAxisCount(
@@ -352,6 +575,13 @@ class _DevControlsPageState extends State<_DevControlsPage> {
   String? _lastMessage;
   final _tempCtrl = TextEditingController(text: '25.0');
   final _humCtrl = TextEditingController(text: '55.0');
+  // Admin user management
+  List<Map<String, dynamic>> _users = const [];
+  final _newUserCtrl = TextEditingController();
+  final _newPassCtrl = TextEditingController();
+  String _newRole = 'user';
+  // Change dev credentials
+  final _devNewPassCtrl = TextEditingController();
 
   Future<void> _call(String path, Map<String, dynamic> body) async {
     setState(() {
@@ -376,6 +606,40 @@ class _DevControlsPageState extends State<_DevControlsPage> {
     } finally {
       if (mounted) setState(() => _sending = false);
     }
+  }
+
+  Future<void> _refreshUsers() async {
+    try {
+      final resp = await http.get(Uri.parse('$kBackendBaseUrl/api/admin/users')).timeout(const Duration(seconds: 10));
+      if (resp.statusCode == 200) {
+        final data = json.decode(resp.body) as Map<String, dynamic>;
+        setState(() { _users = (data['users'] as List).cast<Map<String, dynamic>>(); });
+      }
+    } catch (_) {}
+  }
+
+  Future<void> _addUser() async {
+    try {
+      final resp = await http.post(
+        Uri.parse('$kBackendBaseUrl/api/admin/users'),
+        headers: {'Content-Type': 'application/json'},
+        body: json.encode({'username': _newUserCtrl.text.trim(), 'password': _newPassCtrl.text, 'role': _newRole}),
+      ).timeout(const Duration(seconds: 10));
+      if (resp.statusCode == 200) {
+        _newUserCtrl.clear();
+        _newPassCtrl.clear();
+        await _refreshUsers();
+      }
+    } catch (_) {}
+  }
+
+  Future<void> _deleteUser(String username) async {
+    try {
+      final resp = await http.delete(Uri.parse('$kBackendBaseUrl/api/admin/users/$username')).timeout(const Duration(seconds: 10));
+      if (resp.statusCode == 200) {
+        await _refreshUsers();
+      }
+    } catch (_) {}
   }
 
   @override
@@ -474,6 +738,53 @@ class _DevControlsPageState extends State<_DevControlsPage> {
               ],
             ),
             const SizedBox(height: 24),
+            const Divider(),
+            const Text('User Management (Admin)', style: TextStyle(fontSize: 18, fontWeight: FontWeight.w600)),
+            const SizedBox(height: 8),
+            Row(children: [
+              Expanded(child: TextField(controller: _newUserCtrl, decoration: const InputDecoration(labelText: 'Username'))),
+              const SizedBox(width: 8),
+              Expanded(child: TextField(controller: _newPassCtrl, decoration: const InputDecoration(labelText: 'Password'), obscureText: true)),
+              const SizedBox(width: 8),
+              DropdownButton<String>(
+                value: _newRole,
+                items: const [DropdownMenuItem(value: 'user', child: Text('user')), DropdownMenuItem(value: 'admin', child: Text('admin'))],
+                onChanged: (v) => setState(() { if (v != null) _newRole = v; }),
+              ),
+              const SizedBox(width: 8),
+              ElevatedButton(onPressed: _addUser, child: const Text('Add')),
+              const SizedBox(width: 8),
+              OutlinedButton(onPressed: _refreshUsers, child: const Text('Refresh')),
+            ]),
+            const SizedBox(height: 12),
+            for (final u in _users) ListTile(
+              title: Text('${u['username']}'),
+              subtitle: Text('role: ${u['role']}'),
+              trailing: IconButton(onPressed: () => _deleteUser('${u['username']}'), icon: const Icon(Icons.delete_outline)),
+            ),
+            const Divider(),
+            const Text('Change Dev Password', style: TextStyle(fontSize: 18, fontWeight: FontWeight.w600)),
+            const SizedBox(height: 8),
+            Row(children: [
+              Expanded(child: TextField(controller: _devNewPassCtrl, decoration: const InputDecoration(labelText: 'New Password'), obscureText: true)),
+              const SizedBox(width: 8),
+              ElevatedButton(
+                onPressed: () async {
+                  try {
+                    final resp = await http.post(
+                      Uri.parse('$kBackendBaseUrl/api/admin/change_password'),
+                      headers: {'Content-Type': 'application/json'},
+                      body: json.encode({'username': 'dev', 'password': _devNewPassCtrl.text}),
+                    ).timeout(const Duration(seconds: 10));
+                    setState(() { _lastMessage = resp.statusCode == 200 ? 'Dev password updated' : 'Update failed (${resp.statusCode})'; });
+                    _devNewPassCtrl.clear();
+                  } catch (e) {
+                    setState(() { _lastMessage = 'Update error: $e'; });
+                  }
+                },
+                child: const Text('Update'),
+              ),
+            ]),
             if (_sending) const LinearProgressIndicator(),
             if (_lastMessage != null) ...[
               const SizedBox(height: 12),

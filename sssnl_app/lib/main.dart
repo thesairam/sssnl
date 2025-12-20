@@ -27,7 +27,103 @@ class SssnlApp extends StatelessWidget {
           secondary: Color(0xFF22C55E),
         ),
       ),
+      // Show dashboard directly; no login required here.
       home: const DashboardScreen(),
+    );
+  }
+}
+
+class _DashboardAuthGate extends StatefulWidget {
+  const _DashboardAuthGate();
+
+  @override
+  State<_DashboardAuthGate> createState() => _DashboardAuthGateState();
+}
+
+class _DashboardAuthGateState extends State<_DashboardAuthGate> {
+  bool _authed = false;
+  bool _loading = true;
+  String? _error;
+  final _userCtrl = TextEditingController(text: 'dev');
+  final _passCtrl = TextEditingController(text: 'dev123');
+
+  @override
+  void initState() {
+    super.initState();
+    _checkAuth();
+  }
+
+  Future<void> _checkAuth() async {
+    setState(() { _loading = true; _error = null; });
+    try {
+      final resp = await http.get(Uri.parse('$kBackendBaseUrl/api/auth/me')).timeout(const Duration(seconds: 8));
+      setState(() { _authed = resp.statusCode == 200; });
+    } catch (_) {
+      setState(() { _authed = false; });
+    } finally {
+      setState(() { _loading = false; });
+    }
+  }
+
+  Future<void> _login() async {
+    setState(() { _loading = true; _error = null; });
+    try {
+      final resp = await http.post(
+        Uri.parse('$kBackendBaseUrl/api/auth/login'),
+        headers: {'Content-Type': 'application/json'},
+        body: json.encode({'username': _userCtrl.text.trim(), 'password': _passCtrl.text}),
+      ).timeout(const Duration(seconds: 8));
+      if (resp.statusCode == 200) {
+        setState(() { _authed = true; });
+      } else {
+        setState(() { _error = 'Login failed (${resp.statusCode})'; });
+      }
+    } catch (e) {
+      setState(() { _error = 'Login error: $e'; });
+    } finally {
+      setState(() { _loading = false; });
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    if (_authed) return const DashboardScreen();
+    return Scaffold(
+      appBar: AppBar(title: const Text('Dashboard Login')),
+      body: Center(
+        child: ConstrainedBox(
+          constraints: const BoxConstraints(maxWidth: 360),
+          child: Card(
+            color: const Color(0xFF020617),
+            elevation: 8,
+            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+            child: Padding(
+              padding: const EdgeInsets.all(20),
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  const Text('Sign In', textAlign: TextAlign.center, style: TextStyle(fontSize: 20, fontWeight: FontWeight.w600)),
+                  const SizedBox(height: 12),
+                  TextField(controller: _userCtrl, decoration: const InputDecoration(labelText: 'Username')),
+                  const SizedBox(height: 8),
+                  TextField(controller: _passCtrl, decoration: const InputDecoration(labelText: 'Password'), obscureText: true),
+                  const SizedBox(height: 12),
+                  ElevatedButton(onPressed: _loading ? null : _login, child: const Text('Enter')),
+                  if (_loading) ...[
+                    const SizedBox(height: 12),
+                    const Center(child: SizedBox(width: 16, height: 16, child: CircularProgressIndicator(strokeWidth: 2))),
+                  ],
+                  if (_error != null) ...[
+                    const SizedBox(height: 8),
+                    Text(_error!, style: const TextStyle(color: Colors.redAccent, fontSize: 12)),
+                  ]
+                ],
+              ),
+            ),
+          ),
+        ),
+      ),
     );
   }
 }

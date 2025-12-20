@@ -37,7 +37,9 @@ import subprocess
 import time
 import threading
 import os, shutil
-from flask import Flask, render_template_string, jsonify, request, send_from_directory, redirect
+import sqlite3
+from flask import Flask, render_template_string, jsonify, request, send_from_directory, redirect, session
+from werkzeug.security import generate_password_hash, check_password_hash
 
 # -------------------
 # CONFIG
@@ -75,6 +77,74 @@ GPIO.setup(PIR_PIN, GPIO.IN)
 # FLASK APP
 # -------------------
 app = Flask(__name__)
+# Secret key for session cookies (set via env in production)
+app.secret_key = os.environ.get('FLASK_SECRET_KEY', 'dev-secret-sssnl')
+
+# Data directory and users database
+DATA_DIR = os.path.join(os.path.dirname(__file__), 'data')
+os.makedirs(DATA_DIR, exist_ok=True)
+USERS_DB_PATH = os.path.join(DATA_DIR, 'users.db')
+
+def _db_connect():
+    conn = sqlite3.connect(USERS_DB_PATH)
+    conn.execute('PRAGMA journal_mode=WAL')
+    return conn
+
+def init_users_db():
+    conn = _db_connect()
+    try:
+        conn.execute(
+            'CREATE TABLE IF NOT EXISTS users ('
+            'id INTEGER PRIMARY KEY AUTOINCREMENT,'
+            'username TEXT UNIQUE NOT NULL,'
+            'password_hash TEXT NOT NULL,'
+            "role TEXT NOT NULL DEFAULT 'user',"
+            'created_at INTEGER NOT NULL'
+            ')'
+        )
+        conn.commit()
+        # Seed default admin from env if provided
+        admin_user = os.environ.get('SSSNL_ADMIN_USER')
+        admin_pass = os.environ.get('SSSNL_ADMIN_PASS')
+        if admin_user and admin_pass:
+            try:
+                conn.execute(
+                    'INSERT OR IGNORE INTO users (username, password_hash, role, created_at) VALUES (?,?,?,?)',
+                    (admin_user.lower().strip(), generate_password_hash(admin_pass), 'admin', int(time.time()))
+                )
+                conn.commit()
+            except Exception:
+                pass
+        # Always ensure default dev admin exists
+        try:
+            conn.execute(
+                'INSERT OR IGNORE INTO users (username, password_hash, role, created_at) VALUES (?,?,?,?)',
+                ('dev', generate_password_hash('dev123'), 'admin', int(time.time()))
+            )
+            conn.commit()
+        except Exception:
+            pass
+    finally:
+        conn.close()
+@app.route('/api/admin/change_password', methods=['POST'])
+def admin_change_password():
+    if not require_admin():
+        return jsonify({'error': 'forbidden'}), 403
+    data = request.get_json(silent=True) or {}
+    username = (data.get('username') or '').strip().lower()
+    new_password = data.get('password') or ''
+    if not username or not new_password:
+        return jsonify({'error': 'username_password_required'}), 400
+    conn = _db_connect()
+    try:
+        cur = conn.execute('SELECT id FROM users WHERE username=?', (username,)).fetchone()
+        if not cur:
+            return jsonify({'error': 'not_found'}), 404
+        conn.execute('UPDATE users SET password_hash=? WHERE username=?', (generate_password_hash(new_password), username))
+        conn.commit()
+    finally:
+        conn.close()
+    return jsonify({'ok': True})
 
 # Register media uploader blueprint for simple CMS (API under /api/media)
 try:
@@ -407,11 +477,218 @@ def index():
     return redirect('/dashboard')
 
 
+# -------------------
+# AUTH ENDPOINTS
+# -------------------
+
+@app.route('/api/auth/signup', methods=['POST'])
+def api_signup():
+    data = request.get_json(silent=True) or {}
+    username = (data.get('username') or '').strip().lower()
+    password = data.get('password') or ''
+    if not username or not password:
+        return jsonify({'error': 'username_password_required'}), 400
+    conn = _db_connect()
+    try:
+        conn.execute(
+            'INSERT INTO users (username, password_hash, role, created_at) VALUES (?,?,?,?)',
+            (username, generate_password_hash(password), 'user', int(time.time()))
+        )
+        conn.commit()
+    except sqlite3.IntegrityError:
+        return jsonify({'error': 'user_exists'}), 409
+    finally:
+        conn.close()
+    session['user_id'] = username
+    session['role'] = 'user'
+    return jsonify({'ok': True, 'user': {'username': username, 'role': 'user'}})
+
+
+@app.route('/api/auth/login', methods=['POST'])
+def api_login():
+    data = request.get_json(silent=True) or {}
+    username = (data.get('username') or '').strip().lower()
+    password = data.get('password') or ''
+    if not username or not password:
+        return jsonify({'error': 'username_password_required'}), 400
+    conn = _db_connect()
+    try:
+        row = conn.execute('SELECT username, password_hash, role FROM users WHERE username=?', (username,)).fetchone()
+    finally:
+        conn.close()
+    if not row:
+        return jsonify({'error': 'not_found'}), 404
+    if not check_password_hash(row[1], password):
+        return jsonify({'error': 'invalid_credentials'}), 401
+    session['user_id'] = row[0]
+    session['role'] = row[2]
+    return jsonify({'ok': True, 'user': {'username': row[0], 'role': row[2]}})
+
+
+@app.route('/api/auth/me', methods=['GET'])
+def api_me():
+    uid = session.get('user_id')
+    role = session.get('role')
+    if not uid:
+        return jsonify({'error': 'unauthenticated'}), 401
+    return jsonify({'user': {'username': uid, 'role': role or 'user'}})
+
+
+@app.route('/api/auth/logout', methods=['POST'])
+def api_logout():
+    session.clear()
+    return jsonify({'ok': True})
+
+
+# -------------------
+# USER SELF-MANAGEMENT (requires logged-in user)
+# -------------------
+
+@app.route('/api/user/change_password', methods=['POST'])
+def user_change_password():
+    uid = session.get('user_id')
+    if not uid:
+        return jsonify({'error': 'unauthenticated'}), 401
+    data = request.get_json(silent=True) or {}
+    old_password = data.get('old_password') or ''
+    new_password = data.get('new_password') or ''
+    if not new_password:
+        return jsonify({'error': 'password_required'}), 400
+    conn = _db_connect()
+    try:
+        row = conn.execute('SELECT password_hash FROM users WHERE username=?', (uid,)).fetchone()
+        if not row:
+            return jsonify({'error': 'not_found'}), 404
+        # If old_password was provided, verify it. If not provided, still allow change (e.g., first-time set).
+        if old_password and not check_password_hash(row[0], old_password):
+            return jsonify({'error': 'invalid_old_password'}), 401
+        conn.execute('UPDATE users SET password_hash=? WHERE username=?', (generate_password_hash(new_password), uid))
+        conn.commit()
+    finally:
+        conn.close()
+    return jsonify({'ok': True})
+
+
+@app.route('/api/user/change_username', methods=['POST'])
+def user_change_username():
+    uid = session.get('user_id')
+    if not uid:
+        return jsonify({'error': 'unauthenticated'}), 401
+    data = request.get_json(silent=True) or {}
+    new_username = (data.get('new_username') or '').strip().lower()
+    password = data.get('password') or ''
+    if not new_username:
+        return jsonify({'error': 'username_required'}), 400
+    conn = _db_connect()
+    try:
+        row = conn.execute('SELECT password_hash FROM users WHERE username=?', (uid,)).fetchone()
+        if not row:
+            return jsonify({'error': 'not_found'}), 404
+        if password and not check_password_hash(row[0], password):
+            return jsonify({'error': 'invalid_credentials'}), 401
+        exists = conn.execute('SELECT 1 FROM users WHERE username=?', (new_username,)).fetchone()
+        if exists:
+            return jsonify({'error': 'user_exists'}), 409
+        conn.execute('UPDATE users SET username=? WHERE username=?', (new_username, uid))
+        conn.commit()
+    finally:
+        conn.close()
+    # Move media directory for the user (static/media/<username>)
+    base_dir = os.path.dirname(__file__)
+    old_dir = os.path.join(base_dir, 'static', 'media', uid)
+    new_dir = os.path.join(base_dir, 'static', 'media', new_username)
+    try:
+        if os.path.isdir(old_dir):
+            os.makedirs(os.path.join(base_dir, 'static', 'media'), exist_ok=True)
+            if os.path.exists(new_dir):
+                # Merge old into new, avoiding overwrite
+                for fname in os.listdir(old_dir):
+                    src = os.path.join(old_dir, fname)
+                    dst = os.path.join(new_dir, fname)
+                    if not os.path.exists(dst):
+                        shutil.move(src, dst)
+                shutil.rmtree(old_dir, ignore_errors=True)
+            else:
+                shutil.move(old_dir, new_dir)
+    except Exception as e:
+        # Non-fatal: return warning in response but keep username change
+        session['user_id'] = new_username
+        return jsonify({'ok': True, 'user': {'username': new_username}, 'media_move_warning': str(e)})
+    # Update session
+    session['user_id'] = new_username
+    return jsonify({'ok': True, 'user': {'username': new_username}})
+
+
+# -------------------
+# ADMIN USER MANAGEMENT (requires admin role)
+# -------------------
+
+def require_admin():
+    return session.get('role') == 'admin'
+
+
+@app.route('/api/admin/users', methods=['GET'])
+def admin_list_users():
+    if not require_admin():
+        return jsonify({'error': 'forbidden'}), 403
+    conn = _db_connect()
+    try:
+        rows = conn.execute('SELECT id, username, role, created_at FROM users ORDER BY username').fetchall()
+    finally:
+        conn.close()
+    users = [
+        {'id': r[0], 'username': r[1], 'role': r[2], 'created_at': r[3]}
+        for r in rows
+    ]
+    return jsonify({'users': users})
+
+
+@app.route('/api/admin/users', methods=['POST'])
+def admin_add_user():
+    if not require_admin():
+        return jsonify({'error': 'forbidden'}), 403
+    data = request.get_json(silent=True) or {}
+    username = (data.get('username') or '').strip().lower()
+    password = data.get('password') or ''
+    role = (data.get('role') or 'user').strip().lower()
+    if role not in {'user', 'admin'}:
+        role = 'user'
+    if not username or not password:
+        return jsonify({'error': 'username_password_required'}), 400
+    conn = _db_connect()
+    try:
+        conn.execute('INSERT INTO users (username, password_hash, role, created_at) VALUES (?,?,?,?)',
+                     (username, generate_password_hash(password), role, int(time.time())))
+        conn.commit()
+    except sqlite3.IntegrityError:
+        return jsonify({'error': 'user_exists'}), 409
+    finally:
+        conn.close()
+    return jsonify({'ok': True})
+
+
+@app.route('/api/admin/users/<username>', methods=['DELETE'])
+def admin_delete_user(username):
+    if not require_admin():
+        return jsonify({'error': 'forbidden'}), 403
+    username = (username or '').strip().lower()
+    conn = _db_connect()
+    try:
+        conn.execute('DELETE FROM users WHERE username=?', (username,))
+        conn.commit()
+    finally:
+        conn.close()
+    return jsonify({'ok': True})
+
+
 @app.route('/playlist')
 def get_playlist():
-    # Build fresh playlist every time from static/media
+    # Require logged-in user and serve user-specific media
+    username = session.get('user_id')
+    if not username:
+        return jsonify({'error': 'unauthenticated'}), 401
     static_dir = os.path.join(os.path.dirname(__file__), "static")
-    media_dir = os.path.join(static_dir, 'media')
+    media_dir = os.path.join(static_dir, 'media', username)
     base_dir = os.path.dirname(__file__)
     image_exts = ('.png', '.jpg', '.jpeg', '.gif', '.webp')
     video_exts = ('.mp4', '.mov', '.m4v', '.avi', '.webm')
@@ -615,6 +892,11 @@ def dev_web_app(path="index.html"):
 # STARTUP: prepare static folders, images and playlist
 # -------------------
 if __name__ == "__main__":
+    # init users database for auth
+    try:
+        init_users_db()
+    except Exception as e:
+        print('Warning: failed to init users DB:', e)
     # start sensor threads
     threading.Thread(target=read_dht_sensor, daemon=True).start()
     threading.Thread(target=motion_detector, daemon=True).start()
