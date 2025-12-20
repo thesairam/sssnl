@@ -10,7 +10,9 @@ void main() {
 }
 
 /// Backend base URL: dynamically use current origin for Flutter Web.
-final String kBackendBaseUrl = Uri.base.origin;
+const String _kBackendBaseUrlEnv = String.fromEnvironment('BACKEND_BASE_URL', defaultValue: '');
+final String kBackendBaseUrl = _kBackendBaseUrlEnv.isNotEmpty ? _kBackendBaseUrlEnv : Uri.base.origin;
+final String? kDeviceMacParam = Uri.base.queryParameters['device_mac'];
 
 class SssnlApp extends StatelessWidget {
   const SssnlApp({super.key});
@@ -239,7 +241,10 @@ class _DashboardScreenState extends State<DashboardScreen> {
 
   Future<List<PlaylistItem>> _fetchPlaylist() async {
     try {
-      final resp = await http.get(Uri.parse('$kBackendBaseUrl/playlist'));
+      final uri = Uri.parse('$kBackendBaseUrl/playlist').replace(queryParameters: {
+        if (kDeviceMacParam != null && kDeviceMacParam!.isNotEmpty) 'device_mac': kDeviceMacParam!,
+      });
+      final resp = await http.get(uri);
       if (resp.statusCode != 200) return const [];
       final data = json.decode(resp.body) as Map<String, dynamic>;
       final list = data['playlist'] as List<dynamic>? ?? const [];

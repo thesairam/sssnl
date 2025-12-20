@@ -45,5 +45,17 @@
 	<true/>
 	<key>UIApplicationSupportsIndirectInputEvents</key>
 	<true/>
+	<!-- Bluetooth usage descriptions for BLE pairing -->
+	<key>NSBluetoothAlwaysUsageDescription</key>
+	<string>This app uses Bluetooth to pair with the Raspberry Pi and provision Wi‑Fi.</string>
+	<key>NSBluetoothPeripheralUsageDescription</key>
+	<string>This app connects to nearby devices via Bluetooth LE for setup.</string>
+	<!-- If background BLE is needed in future, enable central mode -->
+	<!--
+	<key>UIBackgroundModes</key>
+	<array>
+		<string>bluetooth-central</string>
+	</array>
+	-->
 </dict>
 </plist>

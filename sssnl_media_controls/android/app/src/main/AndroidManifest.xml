@@ -1,4 +1,11 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
+    <!-- Bluetooth LE support -->
+    <uses-feature android:name="android.hardware.bluetooth_le" android:required="false" />
+    <!-- Android 12+ explicit Bluetooth permissions -->
+    <uses-permission android:name="android.permission.BLUETOOTH_SCAN" />
+    <uses-permission android:name="android.permission.BLUETOOTH_CONNECT" />
+    <!-- Location permission may be required for scanning on some devices/versions -->
+    <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION" />
     <application
         android:label="sssnl_media_controls"
         android:name="${applicationName}"

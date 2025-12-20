@@ -37,10 +37,13 @@ def is_authenticated(req):
     return session.get('user_id') is not None
 
 
-def static_target_dir(target: str) -> str:
+def static_target_dir(target: str, device_mac: str | None = None) -> str:
     root = pathlib.Path(current_app.root_path) / 'static'
     user = session.get('user_id') or 'anon'
     dest = root / target / user
+    if device_mac:
+        # Nest under device-specific folder when provided
+        dest = dest / secure_filename(device_mac)
     dest.mkdir(parents=True, exist_ok=True)
     return str(dest)
 
@@ -52,11 +55,12 @@ def upload_file():
     target = request.form.get('target', 'media')
     if target not in ALLOWED_TARGETS:
         return jsonify({'error': 'invalid target folder'}), 400
+    device_mac = request.form.get('device_mac')
     files = request.files.getlist('file')
     if not files:
         return jsonify({'error': 'no files provided'}), 400
     saved = []
-    dest_dir = static_target_dir(target)
+    dest_dir = static_target_dir(target, device_mac)
     for f in files:
         filename = secure_filename(f.filename)
         if not filename:
@@ -72,7 +76,10 @@ def upload_file():
             i += 1
         f.save(dest_path)
         user = session.get('user_id') or 'anon'
-        saved.append(url_for('static', filename=f"{target}/{user}/{filename}", _external=False))
+        if device_mac:
+            saved.append(url_for('static', filename=f"{target}/{user}/{secure_filename(device_mac)}/{filename}", _external=False))
+        else:
+            saved.append(url_for('static', filename=f"{target}/{user}/{filename}", _external=False))
     if not saved:
         return jsonify({'error': 'no valid files uploaded'}), 400
     return jsonify({'saved': saved}), 201
@@ -83,13 +90,18 @@ def list_files():
     if not is_authenticated(request):
         return jsonify({'error': 'unauthorized'}), 401
     user = session.get('user_id') or 'anon'
-    root = pathlib.Path(current_app.root_path) / 'static' / 'media' / user
+    device_mac = request.args.get('device_mac')
+    base = pathlib.Path(current_app.root_path) / 'static' / 'media' / user
+    root = base / secure_filename(device_mac) if device_mac else base
     files = []
     if root.exists():
         for p in sorted(root.iterdir()):
             if p.is_file():
                 name = p.name
-                url = url_for('static', filename=f"media/{user}/{name}", _external=False)
+                if device_mac:
+                    url = url_for('static', filename=f"media/{user}/{secure_filename(device_mac)}/{name}", _external=False)
+                else:
+                    url = url_for('static', filename=f"media/{user}/{name}", _external=False)
                 lower = name.lower()
                 typ = 'image' if lower.endswith(('.png', '.jpg', '.jpeg', '.gif', '.webp')) else 'video'
                 files.append({'name': name, 'url': url, 'type': typ})
@@ -102,10 +114,12 @@ def delete_file():
         return jsonify({'error': 'unauthorized'}), 401
     data = request.get_json(force=True, silent=True) or {}
     filename = secure_filename(data.get('filename') or '')
+    device_mac = data.get('device_mac')
     if not filename:
         return jsonify({'error': 'filename required'}), 400
     user = session.get('user_id') or 'anon'
-    path = pathlib.Path(current_app.root_path) / 'static' / 'media' / user / filename
+    base = pathlib.Path(current_app.root_path) / 'static' / 'media' / user
+    path = (base / secure_filename(device_mac) / filename) if device_mac else (base / filename)
     if not path.exists() or not path.is_file():
         return jsonify({'error': 'not found'}), 404
     try:

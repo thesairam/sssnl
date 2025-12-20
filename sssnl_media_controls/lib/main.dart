@@ -4,14 +4,18 @@ import 'package:file_picker/file_picker.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:http/http.dart' as http;
+import 'package:shared_preferences/shared_preferences.dart';
+import 'settings.dart';
 
 void main() {
   runApp(const MediaControlsApp());
 }
 
-/// Backend base URL: use the current origin when running as Flutter Web.
-/// This avoids localhost issues on mobile and ensures same-origin requests.
-final String kBackendBaseUrl = Uri.base.origin;
+/// Backend base URL:
+/// - On Web: uses current origin (same-host Flask)
+/// - On Mobile/Desktop: prefer BACKEND_BASE_URL from --dart-define
+const String _kBackendBaseUrlEnv = String.fromEnvironment('BACKEND_BASE_URL', defaultValue: '');
+final String kBackendBaseUrl = _kBackendBaseUrlEnv.isNotEmpty ? _kBackendBaseUrlEnv : Uri.base.origin;
 
 // Dummy dev credentials (front-end only, not secure).
 const String kDevUsername = 'dev';
@@ -171,12 +175,7 @@ class _MediaManagerPageState extends State<_MediaManagerPage> {
   String? _authError;
   final _userCtrl = TextEditingController();
   final _passCtrl = TextEditingController();
-  // User self-management controllers
-  final _oldPassCtrl = TextEditingController();
-  final _newPassCtrl = TextEditingController();
-  final _newUsernameCtrl = TextEditingController();
-  final _verifyPassCtrl = TextEditingController();
-  String? _userMsg;
+  String? _deviceMac;
 
   @override
   void initState() {
@@ -241,8 +240,13 @@ class _MediaManagerPageState extends State<_MediaManagerPage> {
   Future<void> _refresh() async {
     setState(() => _loading = true);
     try {
+        final prefs = await SharedPreferences.getInstance();
+        _deviceMac = prefs.getString('device_mac');
+        final uri = Uri.parse('$kBackendBaseUrl/api/media/files').replace(queryParameters: {
+          if (_deviceMac != null && _deviceMac!.isNotEmpty) 'device_mac': _deviceMac!,
+        });
         final resp =
-          await http.get(Uri.parse('$kBackendBaseUrl/api/media/files')).timeout(
+          await http.get(uri).timeout(
         const Duration(seconds: 10),
       );
       if (resp.statusCode == 200) {
@@ -274,6 +278,11 @@ class _MediaManagerPageState extends State<_MediaManagerPage> {
       final uri = Uri.parse('$kBackendBaseUrl/api/media/upload');
       final request = http.MultipartRequest('POST', uri)
         ..fields['target'] = 'media';
+      final prefs = await SharedPreferences.getInstance();
+      final mac = prefs.getString('device_mac');
+      if (mac != null && mac.isNotEmpty) {
+        request.fields['device_mac'] = mac;
+      }
 
       // On Web/mobile, path is null; use bytes. On mobile/desktop apps, use fromPath.
       if (kIsWeb || file.path == null) {
@@ -315,10 +324,12 @@ class _MediaManagerPageState extends State<_MediaManagerPage> {
     if (ok != true) return;
 
     try {
+        final prefs = await SharedPreferences.getInstance();
+        final mac = prefs.getString('device_mac');
         final resp = await http
           .post(Uri.parse('$kBackendBaseUrl/api/media/delete'),
               headers: {'Content-Type': 'application/json'},
-              body: json.encode({'filename': file.name}))
+              body: json.encode({'filename': file.name, if (mac != null && mac.isNotEmpty) 'device_mac': mac}))
           .timeout(const Duration(seconds: 10));
       if (resp.statusCode == 200) {
         _refresh();
@@ -335,63 +346,33 @@ class _MediaManagerPageState extends State<_MediaManagerPage> {
         setState(() {
           _authed = false;
           _files = const [];
-          _userMsg = 'Signed out.';
+          _deviceMac = null;
         });
       } else {
-        setState(() { _userMsg = 'Logout failed (${resp.statusCode})'; });
+        // no-op
       }
     } catch (e) {
-      setState(() { _userMsg = 'Logout error: $e'; });
+      // no-op
     }
   }
 
-  Future<void> _changePassword() async {
-    setState(() { _userMsg = null; });
-    try {
-      final resp = await http.post(
-        Uri.parse('$kBackendBaseUrl/api/user/change_password'),
-        headers: {'Content-Type': 'application/json'},
-        body: json.encode({'old_password': _oldPassCtrl.text, 'new_password': _newPassCtrl.text}),
-      ).timeout(const Duration(seconds: 10));
-      setState(() {
-        _userMsg = resp.statusCode == 200 ? 'Password updated.' : 'Update failed (${resp.statusCode})';
-      });
-      if (resp.statusCode == 200) {
-        _oldPassCtrl.clear();
-        _newPassCtrl.clear();
-      }
-    } catch (e) {
-      setState(() { _userMsg = 'Update error: $e'; });
-    }
-  }
-
-  Future<void> _changeUsername() async {
-    setState(() { _userMsg = null; });
-    try {
-      final resp = await http.post(
-        Uri.parse('$kBackendBaseUrl/api/user/change_username'),
-        headers: {'Content-Type': 'application/json'},
-        body: json.encode({'new_username': _newUsernameCtrl.text.trim().toLowerCase(), 'password': _verifyPassCtrl.text}),
-      ).timeout(const Duration(seconds: 10));
-      if (resp.statusCode == 200) {
-        setState(() { _userMsg = 'Username updated.'; });
-        _newUsernameCtrl.clear();
-        _verifyPassCtrl.clear();
-        await _refresh();
-      } else if (resp.statusCode == 409) {
-        setState(() { _userMsg = 'Username already exists.'; });
-      } else {
-        setState(() { _userMsg = 'Update failed (${resp.statusCode})'; });
-      }
-    } catch (e) {
-      setState(() { _userMsg = 'Update error: $e'; });
-    }
-  }
+  // Account management moved to SettingsPage; inline handlers removed.
 
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      appBar: AppBar(title: const Text('SSSNL Media Manager')),
+      appBar: AppBar(
+        title: const Text('SSSNL Media Manager'),
+        actions: [
+          if (_authed)
+            IconButton(
+              icon: const Icon(Icons.settings),
+              onPressed: () {
+                Navigator.of(context).push(MaterialPageRoute(builder: (_) => const SettingsPage())).then((_) => _refresh());
+              },
+            ),
+        ],
+      ),
       body: Column(
         children: [
           if (!_authed) Padding(
@@ -459,41 +440,7 @@ class _MediaManagerPageState extends State<_MediaManagerPage> {
               ],
             ),
           ),
-          if (_authed) Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 16),
-            child: Card(
-              color: const Color(0xFF020617),
-              child: Padding(
-                padding: const EdgeInsets.all(12),
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.stretch,
-                  children: [
-                    const Text('User Settings', style: TextStyle(fontSize: 16, fontWeight: FontWeight.w600)),
-                    const SizedBox(height: 8),
-                    Row(children: [
-                      Expanded(child: TextField(controller: _oldPassCtrl, decoration: const InputDecoration(labelText: 'Current Password'), obscureText: true)),
-                      const SizedBox(width: 8),
-                      Expanded(child: TextField(controller: _newPassCtrl, decoration: const InputDecoration(labelText: 'New Password'), obscureText: true)),
-                      const SizedBox(width: 8),
-                      ElevatedButton(onPressed: _changePassword, child: const Text('Change Password')),
-                    ]),
-                    const SizedBox(height: 8),
-                    Row(children: [
-                      Expanded(child: TextField(controller: _newUsernameCtrl, decoration: const InputDecoration(labelText: 'New Username'))),
-                      const SizedBox(width: 8),
-                      Expanded(child: TextField(controller: _verifyPassCtrl, decoration: const InputDecoration(labelText: 'Password (verify)'), obscureText: true)),
-                      const SizedBox(width: 8),
-                      ElevatedButton(onPressed: _changeUsername, child: const Text('Change Username')),
-                    ]),
-                    if (_userMsg != null) ...[
-                      const SizedBox(height: 8),
-                      Text(_userMsg!, style: const TextStyle(fontSize: 12, color: Colors.white70)),
-                    ],
-                  ],
-                ),
-              ),
-            ),
-          ),
+          // Settings moved to separate page; no inline settings card.
           Expanded(
             child: !_authed
                 ? const Center(child: Text('Please sign in to view your media'))

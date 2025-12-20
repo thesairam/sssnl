@@ -688,7 +688,12 @@ def get_playlist():
     if not username:
         return jsonify({'error': 'unauthenticated'}), 401
     static_dir = os.path.join(os.path.dirname(__file__), "static")
-    media_dir = os.path.join(static_dir, 'media', username)
+    device_mac = request.args.get('device_mac')
+    if device_mac:
+        safe_mac = os.path.basename(device_mac)
+        media_dir = os.path.join(static_dir, 'media', username, safe_mac)
+    else:
+        media_dir = os.path.join(static_dir, 'media', username)
     base_dir = os.path.dirname(__file__)
     image_exts = ('.png', '.jpg', '.jpeg', '.gif', '.webp')
     video_exts = ('.mp4', '.mov', '.m4v', '.avi', '.webm')
