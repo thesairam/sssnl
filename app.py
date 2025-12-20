@@ -83,8 +83,9 @@ try:
 except Exception as e:
     print('Warning: media_uploader blueprint not registered:', e)
 
-# Optional path to Flutter Web build of the media/dev controls app.
-DEV_WEB_DIR = os.path.join(os.path.dirname(__file__), 'sssnl_media_controls', 'build', 'web_media')
+# Paths to Flutter Web builds
+MEDIA_WEB_DIR = os.path.join(os.path.dirname(__file__), 'sssnl_media_controls', 'build', 'web_media')
+DEV_WEB_DIR = os.path.join(os.path.dirname(__file__), 'sssnl_media_controls', 'build', 'web_dev')
 DASHBOARD_WEB_DIR = os.path.join(os.path.dirname(__file__), 'sssnl_app', 'build', 'web_dashboard')
 
 # Shared values
@@ -582,33 +583,33 @@ def dashboard_web_app(path="index.html"):
 @app.route('/media/')
 @app.route('/media/<path:path>')
 def media_web_app(path="index.html"):
-    """Serve the Flutter Web build of the media/dev controls app for media/dev UI.
-
-    Build first with:
-      cd sssnl_media_controls && flutter build web
-    """
-    # If the web build is missing, return a helpful JSON error.
-    if not os.path.isdir(DEV_WEB_DIR):
+    """Serve the Flutter Web build of the Media Manager (upload/view)."""
+    if not os.path.isdir(MEDIA_WEB_DIR):
         return jsonify({
-            'error': 'dev_web_not_built',
-            'message': 'Run "flutter build web" in sssnl_media_controls first.',
+            'error': 'media_web_not_built',
+            'message': 'Run "flutter build web" in sssnl_media_controls to generate build/web_media.',
         }), 500
 
-    # Fallback to index.html for unknown paths (SPA-style routing).
-    full_path = os.path.join(DEV_WEB_DIR, path)
+    full_path = os.path.join(MEDIA_WEB_DIR, path)
     if not os.path.exists(full_path) or os.path.isdir(full_path):
         path = 'index.html'
-    return send_from_directory(DEV_WEB_DIR, path)
+    return send_from_directory(MEDIA_WEB_DIR, path)
 
 
 @app.route('/dev/')
 @app.route('/dev/<path:path>')
 def dev_web_app(path="index.html"):
-    """Alias /dev to the same Flutter Web media/dev controls app.
+    """Serve the Flutter Web build of the Dev Controls UI (controls only)."""
+    if not os.path.isdir(DEV_WEB_DIR):
+        return jsonify({
+            'error': 'dev_web_not_built',
+            'message': 'Run "flutter build web" in sssnl_media_controls to generate build/web_dev.',
+        }), 500
 
-    /media will open the Media tab, /dev will open the Developer tab.
-    """
-    return media_web_app(path)
+    full_path = os.path.join(DEV_WEB_DIR, path)
+    if not os.path.exists(full_path) or os.path.isdir(full_path):
+        path = 'index.html'
+    return send_from_directory(DEV_WEB_DIR, path)
 
 # -------------------
 # STARTUP: prepare static folders, images and playlist

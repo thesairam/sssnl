@@ -9,9 +9,8 @@ void main() {
   runApp(const SssnlApp());
 }
 
-/// Base URL of the Flask backend.
-/// The backend now runs on localhost:5656.
-const String kBackendBaseUrl = 'http://localhost:5656';
+/// Backend base URL: dynamically use current origin for Flutter Web.
+final String kBackendBaseUrl = Uri.base.origin;
 
 class SssnlApp extends StatelessWidget {
   const SssnlApp({super.key});

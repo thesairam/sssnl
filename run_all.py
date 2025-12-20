@@ -26,27 +26,32 @@ import os
 ROOT = Path(__file__).resolve().parent
 
 
-def ensure_flutter_web_build(app_dir: Path, label: str, flutter_bin: str) -> None:
-    """Build Flutter web for the given app with correct base href if missing.
+def ensure_flutter_web_build(app_dir: Path, out_dir: Path, base_href: str, flutter_bin: str) -> None:
+    """Build Flutter web to `out_dir` with `base_href` if missing or stale.
 
-    Dashboard needs base href `/dashboard/`; media/dev needs `/media/`.
-    Output to distinct folders to avoid clashes.
+    Rebuilds when the source `lib/main.dart` is newer than `index.html`.
     """
-    out_dir = app_dir / "build" / ("web_dashboard" if label == "dashboard" else "web_media")
     web_index = out_dir / "index.html"
-    if web_index.exists():
+    src_main = app_dir / "lib" / "main.dart"
+    needs_build = not web_index.exists()
+    if web_index.exists() and src_main.exists():
+        try:
+            needs_build = src_main.stat().st_mtime > web_index.stat().st_mtime
+        except Exception:
+            needs_build = False
+    if not needs_build:
         return
-    print(f"[launcher] Web build for {label} not found; running '{flutter_bin} build web' with base href...")
+    print(f"[launcher] Building web bundle: base '{base_href}' -> {out_dir}")
+    out_dir.mkdir(parents=True, exist_ok=True)
     try:
-        base = "/dashboard/" if label == "dashboard" else "/media/"
         subprocess.run([
             flutter_bin, "build", "web",
-            "--base-href", base,
+            "--base-href", base_href,
             "--release",
             "--output", str(out_dir)
         ], cwd=str(app_dir), check=True)
     except Exception as exc:  # noqa: BLE001
-        print(f"[launcher] Warning: flutter build web failed for {label}: {exc}")
+        print(f"[launcher] Warning: flutter build web failed for {app_dir.name}: {exc}")
 
 def start_process(name: str, args: list[str], cwd: Path) -> subprocess.Popen:
     print(f"[launcher] Starting {name} in {cwd} -> {' '.join(args)}")
@@ -108,8 +113,11 @@ def main() -> None:
             print("[launcher] Flutter not found. Skipping web builds. Serving prebuilt web if available.")
         else:
             # Build web bundles with correct base-hrefs when flutter is available
-            ensure_flutter_web_build(sssnl_app_dir, "dashboard", flutter_bin)
-            ensure_flutter_web_build(media_controls_dir, "media_controls", flutter_bin)
+            ensure_flutter_web_build(sssnl_app_dir, sssnl_app_dir / "build" / "web_dashboard", "/dashboard/", flutter_bin)
+            # Media-only bundle
+            ensure_flutter_web_build(media_controls_dir, media_controls_dir / "build" / "web_media", "/media/", flutter_bin)
+            # Dev-only bundle
+            ensure_flutter_web_build(media_controls_dir, media_controls_dir / "build" / "web_dev", "/dev/", flutter_bin)
 
         # 1) Flask backend (app.py)
         procs.append(
