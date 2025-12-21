@@ -101,6 +101,15 @@ users_table = Table(
     Column('created_at', Integer, nullable=False),
 )
 
+devices_table = Table(
+    'devices', _metadata,
+    Column('id', Integer, primary_key=True, autoincrement=True),
+    Column('user_id', String(255), nullable=False),
+    Column('device_mac', String(255), nullable=False),
+    Column('device_name', String(255)),
+    Column('configured_at', Integer, nullable=False),
+)
+
 def _db_connect():
     return _db_engine.connect()
 
@@ -530,6 +539,119 @@ def api_me():
 @app.route('/api/auth/logout', methods=['POST'])
 def api_logout():
     session.clear()
+    return jsonify({'ok': True})
+
+
+# -------------------
+# DEVICE MANAGEMENT API
+# -------------------
+
+@app.route('/api/devices', methods=['GET'])
+def get_devices():
+    uid = session.get('user_id')
+    if not uid:
+        return jsonify({'error': 'unauthenticated'}), 401
+    
+    with _db_engine.connect() as conn:
+        result = conn.execute(
+            text('SELECT id, device_mac, device_name, configured_at FROM devices WHERE user_id=:uid ORDER BY configured_at DESC'),
+            {'uid': uid}
+        )
+        devices = []
+        for row in result:
+            devices.append({
+                'id': row[0],
+                'device_mac': row[1],
+                'device_name': row[2],
+                'configured_at': row[3]
+            })
+    return jsonify({'devices': devices})
+
+
+@app.route('/api/devices', methods=['POST'])
+def add_device():
+    uid = session.get('user_id')
+    if not uid:
+        return jsonify({'error': 'unauthenticated'}), 401
+    
+    data = request.get_json(silent=True) or {}
+    device_mac = (data.get('device_mac') or '').strip()
+    device_name = (data.get('device_name') or '').strip() or None
+    
+    if not device_mac:
+        return jsonify({'error': 'device_mac_required'}), 400
+    
+    try:
+        with _db_engine.begin() as conn:
+            # Check if device already exists for this user
+            existing = conn.execute(
+                text('SELECT id FROM devices WHERE user_id=:uid AND device_mac=:mac'),
+                {'uid': uid, 'mac': device_mac}
+            ).fetchone()
+            
+            if existing:
+                return jsonify({'error': 'device_already_exists'}), 409
+            
+            # Insert new device
+            result = conn.execute(
+                text('INSERT INTO devices (user_id, device_mac, device_name, configured_at) VALUES (:uid, :mac, :name, :ts)'),
+                {'uid': uid, 'mac': device_mac, 'name': device_name, 'ts': int(time.time())}
+            )
+            device_id = result.lastrowid
+            
+        return jsonify({'ok': True, 'device_id': device_id}), 201
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+
+@app.route('/api/devices/<int:device_id>', methods=['DELETE'])
+def delete_device(device_id):
+    uid = session.get('user_id')
+    if not uid:
+        return jsonify({'error': 'unauthenticated'}), 401
+    
+    with _db_engine.begin() as conn:
+        # Verify device belongs to user
+        row = conn.execute(
+            text('SELECT id FROM devices WHERE id=:id AND user_id=:uid'),
+            {'id': device_id, 'uid': uid}
+        ).fetchone()
+        
+        if not row:
+            return jsonify({'error': 'device_not_found'}), 404
+        
+        conn.execute(
+            text('DELETE FROM devices WHERE id=:id'),
+            {'id': device_id}
+        )
+    
+    return jsonify({'ok': True})
+
+
+@app.route('/api/devices/<int:device_id>', methods=['PUT'])
+def update_device(device_id):
+    uid = session.get('user_id')
+    if not uid:
+        return jsonify({'error': 'unauthenticated'}), 401
+    
+    data = request.get_json(silent=True) or {}
+    device_name = (data.get('device_name') or '').strip() or None
+    
+    with _db_engine.begin() as conn:
+        # Verify device belongs to user
+        row = conn.execute(
+            text('SELECT id FROM devices WHERE id=:id AND user_id=:uid'),
+            {'id': device_id, 'uid': uid}
+        ).fetchone()
+        
+        if not row:
+            return jsonify({'error': 'device_not_found'}), 404
+        
+        conn.execute(
+            text('UPDATE devices SET device_name=:name WHERE id=:id'),
+            {'name': device_name, 'id': device_id}
+        )
+    
     return jsonify({'ok': True})
 
 
