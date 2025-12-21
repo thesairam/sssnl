@@ -1,0 +1,30 @@
+version: "3.9"
+
+services:
+  mariadb:
+    image: mariadb:11.4
+    restart: unless-stopped
+    environment:
+      - MARIADB_ROOT_PASSWORD=${MARIADB_ROOT_PASSWORD:-rootpass}
+      - MARIADB_DATABASE=${MARIADB_DATABASE:-sssnl}
+      - MARIADB_USER=${MARIADB_USER:-dbadmin}
+      - MARIADB_PASSWORD=${MARIADB_PASSWORD:-dbadmin}
+    ports:
+      - "3306:3306"
+    volumes:
+      - ./data/mariadb:/var/lib/mysql
+    healthcheck:
+      test: ["CMD", "bash", "-lc", "mariadb-admin ping -uroot -p${MARIADB_ROOT_PASSWORD:-rootpass}" ]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
+# Optional: add Adminer UI
+  adminer:
+    image: adminer:latest
+    restart: unless-stopped
+    ports:
+      - "8080:8080"
+    depends_on:
+      mariadb:
+        condition: service_healthy

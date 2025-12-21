@@ -38,6 +38,8 @@ import time
 import threading
 import os, shutil
 import sqlite3
+from sqlalchemy import create_engine, text, Table, Column, Integer, String, MetaData
+from sqlalchemy.engine import Engine
 from flask import Flask, render_template_string, jsonify, request, send_from_directory, redirect, session
 from werkzeug.security import generate_password_hash, check_password_hash
 
@@ -80,52 +82,49 @@ app = Flask(__name__)
 # Secret key for session cookies (set via env in production)
 app.secret_key = os.environ.get('FLASK_SECRET_KEY', 'dev-secret-sssnl')
 
-# Data directory and users database
+"""Database configuration: uses SQLAlchemy. Defaults to MariaDB if DB_URI env provided,
+else falls back to SQLite file under data/users.db."""
 DATA_DIR = os.path.join(os.path.dirname(__file__), 'data')
 os.makedirs(DATA_DIR, exist_ok=True)
 USERS_DB_PATH = os.path.join(DATA_DIR, 'users.db')
 
+DB_URI = os.environ.get('DB_URI') or f"sqlite:///{USERS_DB_PATH}"
+_db_engine: Engine = create_engine(DB_URI, pool_pre_ping=True, future=True)
+
+_metadata = MetaData()
+users_table = Table(
+    'users', _metadata,
+    Column('id', Integer, primary_key=True, autoincrement=True),
+    Column('username', String(255), unique=True, nullable=False),
+    Column('password_hash', String(255), nullable=False),
+    Column('role', String(32), nullable=False, default='user'),
+    Column('created_at', Integer, nullable=False),
+)
+
 def _db_connect():
-    conn = sqlite3.connect(USERS_DB_PATH)
-    conn.execute('PRAGMA journal_mode=WAL')
-    return conn
+    return _db_engine.connect()
 
 def init_users_db():
-    conn = _db_connect()
-    try:
-        conn.execute(
-            'CREATE TABLE IF NOT EXISTS users ('
-            'id INTEGER PRIMARY KEY AUTOINCREMENT,'
-            'username TEXT UNIQUE NOT NULL,'
-            'password_hash TEXT NOT NULL,'
-            "role TEXT NOT NULL DEFAULT 'user',"
-            'created_at INTEGER NOT NULL'
-            ')'
-        )
-        conn.commit()
-        # Seed default admin from env if provided
-        admin_user = os.environ.get('SSSNL_ADMIN_USER')
-        admin_pass = os.environ.get('SSSNL_ADMIN_PASS')
+    # Create tables if not exist
+    _metadata.create_all(_db_engine)
+    # Seed admins
+    admin_user = os.environ.get('SSSNL_ADMIN_USER')
+    admin_pass = os.environ.get('SSSNL_ADMIN_PASS')
+    with _db_engine.begin() as conn:
         if admin_user and admin_pass:
-            try:
+            row = conn.execute(text('SELECT id FROM users WHERE username=:u'), {'u': admin_user.lower().strip()}).fetchone()
+            if not row:
                 conn.execute(
-                    'INSERT OR IGNORE INTO users (username, password_hash, role, created_at) VALUES (?,?,?,?)',
-                    (admin_user.lower().strip(), generate_password_hash(admin_pass), 'admin', int(time.time()))
+                    text('INSERT INTO users (username, password_hash, role, created_at) VALUES (:u,:ph,:role,:ts)'),
+                    {'u': admin_user.lower().strip(), 'ph': generate_password_hash(admin_pass), 'role': 'admin', 'ts': int(time.time())}
                 )
-                conn.commit()
-            except Exception:
-                pass
-        # Always ensure default dev admin exists
-        try:
+        # ensure default admin 'dbadmin' exists
+        row = conn.execute(text('SELECT id FROM users WHERE username=:u'), {'u': 'dbadmin'}).fetchone()
+        if not row:
             conn.execute(
-                'INSERT OR IGNORE INTO users (username, password_hash, role, created_at) VALUES (?,?,?,?)',
-                ('dev', generate_password_hash('dev123'), 'admin', int(time.time()))
+                text('INSERT INTO users (username, password_hash, role, created_at) VALUES (:u,:ph,:role,:ts)'),
+                {'u': 'dbadmin', 'ph': generate_password_hash('dbadmin'), 'role': 'admin', 'ts': int(time.time())}
             )
-            conn.commit()
-        except Exception:
-            pass
-    finally:
-        conn.close()
 @app.route('/api/admin/change_password', methods=['POST'])
 def admin_change_password():
     if not require_admin():
@@ -135,15 +134,11 @@ def admin_change_password():
     new_password = data.get('password') or ''
     if not username or not new_password:
         return jsonify({'error': 'username_password_required'}), 400
-    conn = _db_connect()
-    try:
-        cur = conn.execute('SELECT id FROM users WHERE username=?', (username,)).fetchone()
+    with _db_engine.begin() as conn:
+        cur = conn.execute(text('SELECT id FROM users WHERE username=:username'), {'username': username}).fetchone()
         if not cur:
             return jsonify({'error': 'not_found'}), 404
-        conn.execute('UPDATE users SET password_hash=? WHERE username=?', (generate_password_hash(new_password), username))
-        conn.commit()
-    finally:
-        conn.close()
+        conn.execute(text('UPDATE users SET password_hash=:ph WHERE username=:username'), {'ph': generate_password_hash(new_password), 'username': username})
     return jsonify({'ok': True})
 
 # Register media uploader blueprint for simple CMS (API under /api/media)
@@ -488,17 +483,18 @@ def api_signup():
     password = data.get('password') or ''
     if not username or not password:
         return jsonify({'error': 'username_password_required'}), 400
-    conn = _db_connect()
     try:
-        conn.execute(
-            'INSERT INTO users (username, password_hash, role, created_at) VALUES (?,?,?,?)',
-            (username, generate_password_hash(password), 'user', int(time.time()))
-        )
-        conn.commit()
-    except sqlite3.IntegrityError:
-        return jsonify({'error': 'user_exists'}), 409
-    finally:
-        conn.close()
+        with _db_engine.begin() as conn:
+            # Check exists
+            exists = conn.execute(text('SELECT 1 FROM users WHERE username=:u'), {'u': username}).fetchone()
+            if exists:
+                return jsonify({'error': 'user_exists'}), 409
+            conn.execute(
+                text('INSERT INTO users (username, password_hash, role, created_at) VALUES (:u,:ph,:role,:ts)'),
+                {'u': username, 'ph': generate_password_hash(password), 'role': 'user', 'ts': int(time.time())}
+            )
+    except Exception:
+        return jsonify({'error': 'db_error'}), 500
     session['user_id'] = username
     session['role'] = 'user'
     return jsonify({'ok': True, 'user': {'username': username, 'role': 'user'}})
@@ -511,11 +507,8 @@ def api_login():
     password = data.get('password') or ''
     if not username or not password:
         return jsonify({'error': 'username_password_required'}), 400
-    conn = _db_connect()
-    try:
-        row = conn.execute('SELECT username, password_hash, role FROM users WHERE username=?', (username,)).fetchone()
-    finally:
-        conn.close()
+    with _db_engine.connect() as conn:
+        row = conn.execute(text('SELECT username, password_hash, role FROM users WHERE username=:u'), {'u': username}).fetchone()
     if not row:
         return jsonify({'error': 'not_found'}), 404
     if not check_password_hash(row[1], password):
@@ -554,18 +547,13 @@ def user_change_password():
     new_password = data.get('new_password') or ''
     if not new_password:
         return jsonify({'error': 'password_required'}), 400
-    conn = _db_connect()
-    try:
-        row = conn.execute('SELECT password_hash FROM users WHERE username=?', (uid,)).fetchone()
+    with _db_engine.begin() as conn:
+        row = conn.execute(text('SELECT password_hash FROM users WHERE username=:u'), {'u': uid}).fetchone()
         if not row:
             return jsonify({'error': 'not_found'}), 404
-        # If old_password was provided, verify it. If not provided, still allow change (e.g., first-time set).
         if old_password and not check_password_hash(row[0], old_password):
             return jsonify({'error': 'invalid_old_password'}), 401
-        conn.execute('UPDATE users SET password_hash=? WHERE username=?', (generate_password_hash(new_password), uid))
-        conn.commit()
-    finally:
-        conn.close()
+        conn.execute(text('UPDATE users SET password_hash=:ph WHERE username=:u'), {'ph': generate_password_hash(new_password), 'u': uid})
     return jsonify({'ok': True})
 
 
@@ -579,20 +567,16 @@ def user_change_username():
     password = data.get('password') or ''
     if not new_username:
         return jsonify({'error': 'username_required'}), 400
-    conn = _db_connect()
-    try:
-        row = conn.execute('SELECT password_hash FROM users WHERE username=?', (uid,)).fetchone()
+    with _db_engine.begin() as conn:
+        row = conn.execute(text('SELECT password_hash FROM users WHERE username=:u'), {'u': uid}).fetchone()
         if not row:
             return jsonify({'error': 'not_found'}), 404
         if password and not check_password_hash(row[0], password):
             return jsonify({'error': 'invalid_credentials'}), 401
-        exists = conn.execute('SELECT 1 FROM users WHERE username=?', (new_username,)).fetchone()
+        exists = conn.execute(text('SELECT 1 FROM users WHERE username=:nu'), {'nu': new_username}).fetchone()
         if exists:
             return jsonify({'error': 'user_exists'}), 409
-        conn.execute('UPDATE users SET username=? WHERE username=?', (new_username, uid))
-        conn.commit()
-    finally:
-        conn.close()
+        conn.execute(text('UPDATE users SET username=:nu WHERE username=:u'), {'nu': new_username, 'u': uid})
     # Move media directory for the user (static/media/<username>)
     base_dir = os.path.dirname(__file__)
     old_dir = os.path.join(base_dir, 'static', 'media', uid)
@@ -631,11 +615,8 @@ def require_admin():
 def admin_list_users():
     if not require_admin():
         return jsonify({'error': 'forbidden'}), 403
-    conn = _db_connect()
-    try:
-        rows = conn.execute('SELECT id, username, role, created_at FROM users ORDER BY username').fetchall()
-    finally:
-        conn.close()
+    with _db_engine.connect() as conn:
+        rows = conn.execute(text('SELECT id, username, role, created_at FROM users ORDER BY username')).fetchall()
     users = [
         {'id': r[0], 'username': r[1], 'role': r[2], 'created_at': r[3]}
         for r in rows
@@ -655,15 +636,12 @@ def admin_add_user():
         role = 'user'
     if not username or not password:
         return jsonify({'error': 'username_password_required'}), 400
-    conn = _db_connect()
-    try:
-        conn.execute('INSERT INTO users (username, password_hash, role, created_at) VALUES (?,?,?,?)',
-                     (username, generate_password_hash(password), role, int(time.time())))
-        conn.commit()
-    except sqlite3.IntegrityError:
-        return jsonify({'error': 'user_exists'}), 409
-    finally:
-        conn.close()
+    with _db_engine.begin() as conn:
+        exists = conn.execute(text('SELECT 1 FROM users WHERE username=:u'), {'u': username}).fetchone()
+        if exists:
+            return jsonify({'error': 'user_exists'}), 409
+        conn.execute(text('INSERT INTO users (username, password_hash, role, created_at) VALUES (:u,:ph,:role,:ts)'),
+                     {'u': username, 'ph': generate_password_hash(password), 'role': role, 'ts': int(time.time())})
     return jsonify({'ok': True})
 
 
@@ -672,12 +650,8 @@ def admin_delete_user(username):
     if not require_admin():
         return jsonify({'error': 'forbidden'}), 403
     username = (username or '').strip().lower()
-    conn = _db_connect()
-    try:
-        conn.execute('DELETE FROM users WHERE username=?', (username,))
-        conn.commit()
-    finally:
-        conn.close()
+    with _db_engine.begin() as conn:
+        conn.execute(text('DELETE FROM users WHERE username=:u'), {'u': username})
     return jsonify({'ok': True})
 
 
