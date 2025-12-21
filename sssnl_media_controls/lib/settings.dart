@@ -3,15 +3,19 @@ import 'dart:convert';
 
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter_blue_plus/flutter_blue_plus.dart';
 import 'package:http/http.dart' as http;
 import 'package:shared_preferences/shared_preferences.dart';
+import 'services/ble_service.dart';
+import 'screens/device_list_screen.dart';
 
-// BLE only on mobile platforms; guard imports for web.
-// flutter_blue_plus does not support web; show instructions instead.
-import 'package:flutter_blue_plus/flutter_blue_plus.dart';
-
-const String _kBackendBaseUrlEnv = String.fromEnvironment('BACKEND_BASE_URL', defaultValue: '');
-final String kBackendBaseUrl = _kBackendBaseUrlEnv.isNotEmpty ? _kBackendBaseUrlEnv : Uri.base.origin;
+const String _kBackendBaseUrlEnv = String.fromEnvironment(
+  'BACKEND_BASE_URL',
+  defaultValue: '',
+);
+final String kBackendBaseUrl = _kBackendBaseUrlEnv.isNotEmpty
+    ? _kBackendBaseUrlEnv
+    : Uri.base.origin;
 
 class SettingsPage extends StatefulWidget {
   const SettingsPage({super.key});
@@ -42,47 +46,89 @@ class _SettingsPageState extends State<SettingsPage> {
   }
 
   Future<void> _changePassword() async {
-    setState(() { _msg = null; });
+    setState(() {
+      _msg = null;
+    });
     try {
-      final resp = await http.post(
-        Uri.parse('$kBackendBaseUrl/api/user/change_password'),
-        headers: {'Content-Type': 'application/json'},
-        body: json.encode({'old_password': _oldPassCtrl.text, 'new_password': _newPassCtrl.text}),
-      ).timeout(const Duration(seconds: 10));
-      setState(() { _msg = resp.statusCode == 200 ? 'Password updated.' : 'Update failed (${resp.statusCode})'; });
+      final resp = await http
+          .post(
+            Uri.parse('$kBackendBaseUrl/api/user/change_password'),
+            headers: {'Content-Type': 'application/json'},
+            body: json.encode({
+              'old_password': _oldPassCtrl.text,
+              'new_password': _newPassCtrl.text,
+            }),
+          )
+          .timeout(const Duration(seconds: 10));
+      setState(() {
+        _msg = resp.statusCode == 200
+            ? 'Password updated.'
+            : 'Update failed (${resp.statusCode})';
+      });
       if (resp.statusCode == 200) {
         _oldPassCtrl.clear();
         _newPassCtrl.clear();
       }
     } catch (e) {
-      setState(() { _msg = 'Update error: $e'; });
+      setState(() {
+        _msg = 'Update error: $e';
+      });
     }
   }
 
   Future<void> _changeUsername() async {
-    setState(() { _msg = null; });
+    setState(() {
+      _msg = null;
+    });
     try {
-      final resp = await http.post(
-        Uri.parse('$kBackendBaseUrl/api/user/change_username'),
-        headers: {'Content-Type': 'application/json'},
-        body: json.encode({'new_username': _newUsernameCtrl.text.trim().toLowerCase(), 'password': _verifyPassCtrl.text}),
-      ).timeout(const Duration(seconds: 10));
+      final resp = await http
+          .post(
+            Uri.parse('$kBackendBaseUrl/api/user/change_username'),
+            headers: {'Content-Type': 'application/json'},
+            body: json.encode({
+              'new_username': _newUsernameCtrl.text.trim().toLowerCase(),
+              'password': _verifyPassCtrl.text,
+            }),
+          )
+          .timeout(const Duration(seconds: 10));
       if (resp.statusCode == 200) {
-        setState(() { _msg = 'Username updated.'; });
+        setState(() {
+          _msg = 'Username updated.';
+        });
         _newUsernameCtrl.clear();
         _verifyPassCtrl.clear();
       } else if (resp.statusCode == 409) {
-        setState(() { _msg = 'Username already exists.'; });
+        setState(() {
+          _msg = 'Username already exists.';
+        });
       } else {
-        setState(() { _msg = 'Update failed (${resp.statusCode})'; });
+        setState(() {
+          _msg = 'Update failed (${resp.statusCode})';
+        });
       }
     } catch (e) {
-      setState(() { _msg = 'Update error: $e'; });
+      setState(() {
+        _msg = 'Update error: $e';
+      });
     }
   }
 
   void _openPairing() async {
-    await Navigator.of(context).push(MaterialPageRoute(builder: (_) => const DevicePairingPage()));
+    if (kIsWeb) {
+      setState(() {
+        _msg =
+            'Bluetooth pairing is not supported on Web. Use Android/iOS app.';
+      });
+      return;
+    }
+    final bleService = BleService();
+    await Navigator.of(context).push(
+      MaterialPageRoute(
+        builder: (_) =>
+            DeviceListScreen(bleService: bleService, baseUrl: kBackendBaseUrl),
+      ),
+    );
+    bleService.dispose();
     _loadPrefs();
   }
 
@@ -102,26 +148,79 @@ class _SettingsPageState extends State<SettingsPage> {
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.stretch,
                   children: [
-                    const Text('Account', style: TextStyle(fontSize: 18, fontWeight: FontWeight.w600)),
+                    const Text(
+                      'Account',
+                      style: TextStyle(
+                        fontSize: 18,
+                        fontWeight: FontWeight.w600,
+                      ),
+                    ),
                     const SizedBox(height: 8),
-                    Row(children: [
-                      Expanded(child: TextField(controller: _oldPassCtrl, decoration: const InputDecoration(labelText: 'Current Password'), obscureText: true)),
-                      const SizedBox(width: 8),
-                      Expanded(child: TextField(controller: _newPassCtrl, decoration: const InputDecoration(labelText: 'New Password'), obscureText: true)),
-                      const SizedBox(width: 8),
-                      ElevatedButton(onPressed: _changePassword, child: const Text('Change Password')),
-                    ]),
+                    Row(
+                      children: [
+                        Expanded(
+                          child: TextField(
+                            controller: _oldPassCtrl,
+                            decoration: const InputDecoration(
+                              labelText: 'Current Password',
+                            ),
+                            obscureText: true,
+                          ),
+                        ),
+                        const SizedBox(width: 8),
+                        Expanded(
+                          child: TextField(
+                            controller: _newPassCtrl,
+                            decoration: const InputDecoration(
+                              labelText: 'New Password',
+                            ),
+                            obscureText: true,
+                          ),
+                        ),
+                        const SizedBox(width: 8),
+                        ElevatedButton(
+                          onPressed: _changePassword,
+                          child: const Text('Change Password'),
+                        ),
+                      ],
+                    ),
                     const SizedBox(height: 8),
-                    Row(children: [
-                      Expanded(child: TextField(controller: _newUsernameCtrl, decoration: const InputDecoration(labelText: 'New Username'))),
-                      const SizedBox(width: 8),
-                      Expanded(child: TextField(controller: _verifyPassCtrl, decoration: const InputDecoration(labelText: 'Password (verify)'), obscureText: true)),
-                      const SizedBox(width: 8),
-                      ElevatedButton(onPressed: _changeUsername, child: const Text('Change Username')),
-                    ]),
+                    Row(
+                      children: [
+                        Expanded(
+                          child: TextField(
+                            controller: _newUsernameCtrl,
+                            decoration: const InputDecoration(
+                              labelText: 'New Username',
+                            ),
+                          ),
+                        ),
+                        const SizedBox(width: 8),
+                        Expanded(
+                          child: TextField(
+                            controller: _verifyPassCtrl,
+                            decoration: const InputDecoration(
+                              labelText: 'Password (verify)',
+                            ),
+                            obscureText: true,
+                          ),
+                        ),
+                        const SizedBox(width: 8),
+                        ElevatedButton(
+                          onPressed: _changeUsername,
+                          child: const Text('Change Username'),
+                        ),
+                      ],
+                    ),
                     if (_msg != null) ...[
                       const SizedBox(height: 8),
-                      Text(_msg!, style: const TextStyle(fontSize: 12, color: Colors.white70)),
+                      Text(
+                        _msg!,
+                        style: const TextStyle(
+                          fontSize: 12,
+                          color: Colors.white70,
+                        ),
+                      ),
                     ],
                   ],
                 ),
@@ -135,15 +234,33 @@ class _SettingsPageState extends State<SettingsPage> {
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.stretch,
                   children: [
-                    const Text('Device', style: TextStyle(fontSize: 18, fontWeight: FontWeight.w600)),
+                    const Text(
+                      'Device',
+                      style: TextStyle(
+                        fontSize: 18,
+                        fontWeight: FontWeight.w600,
+                      ),
+                    ),
                     const SizedBox(height: 8),
-                    Row(children: [
-                      Expanded(child: Text('Current device MAC: ${_deviceMac ?? 'Not paired'}')),
-                      const SizedBox(width: 8),
-                      ElevatedButton.icon(onPressed: _openPairing, icon: const Icon(Icons.bluetooth), label: const Text('Add / Pair Device')),
-                    ]),
+                    Row(
+                      children: [
+                        Expanded(
+                          child: Text(
+                            'Current device MAC: ${_deviceMac ?? 'Not paired'}',
+                          ),
+                        ),
+                        const SizedBox(width: 8),
+                        ElevatedButton.icon(
+                          onPressed: _openPairing,
+                          icon: const Icon(Icons.bluetooth),
+                          label: const Text('Add / Pair Device'),
+                        ),
+                      ],
+                    ),
                     const SizedBox(height: 8),
-                    const Text('Uploads and media listing will be scoped to the paired device folder.'),
+                    const Text(
+                      'Uploads and media listing will be scoped to the paired device folder.',
+                    ),
                   ],
                 ),
               ),
@@ -177,27 +294,42 @@ class _DevicePairingPageState extends State<DevicePairingPage> {
 
   Future<void> _scan() async {
     if (kIsWeb) {
-      setState(() { _status = 'Bluetooth pairing is not supported on Web. Use Android/iOS app.'; });
+      setState(() {
+        _status =
+            'Bluetooth pairing is not supported on Web. Use Android/iOS app.';
+      });
       return;
     }
-    setState(() { _scanning = true; _status = null; });
+    setState(() {
+      _scanning = true;
+      _status = null;
+    });
     try {
       await FlutterBluePlus.startScan(timeout: const Duration(seconds: 6));
       final subs = FlutterBluePlus.scanResults.listen((results) {
-        setState(() { _devices = results; });
+        setState(() {
+          _devices = results;
+        });
       });
       await Future.delayed(const Duration(seconds: 6));
       await FlutterBluePlus.stopScan();
       await subs.cancel();
-      setState(() { _scanning = false; });
+      setState(() {
+        _scanning = false;
+      });
     } catch (e) {
-      setState(() { _status = 'Scan error: $e'; _scanning = false; });
+      setState(() {
+        _status = 'Scan error: $e';
+        _scanning = false;
+      });
     }
   }
 
   Future<void> _pair(ScanResult result) async {
     if (kIsWeb) return;
-    setState(() { _status = 'Connecting…'; });
+    setState(() {
+      _status = 'Connecting…';
+    });
     final device = result.device;
     try {
       await device.connect(timeout: const Duration(seconds: 10));
@@ -205,11 +337,14 @@ class _DevicePairingPageState extends State<DevicePairingPage> {
       BluetoothService? svc;
       for (final s in services) {
         if (s.uuid.toString().toLowerCase() == serviceUuid) {
-          svc = s; break;
+          svc = s;
+          break;
         }
       }
       if (svc == null) {
-        setState(() { _status = 'Provisioning service not found.'; });
+        setState(() {
+          _status = 'Provisioning service not found.';
+        });
         await device.disconnect();
         return;
       }
@@ -221,13 +356,18 @@ class _DevicePairingPageState extends State<DevicePairingPage> {
         if (id == macCharUuid) mac = c;
       }
       if (creds == null || mac == null) {
-        setState(() { _status = 'Provisioning service/characteristics not found.'; });
+        setState(() {
+          _status = 'Provisioning service/characteristics not found.';
+        });
         await device.disconnect();
         return;
       }
 
       // Send Wi-Fi credentials: SSID + password as JSON
-      final payload = json.encode({'ssid': _ssidCtrl.text.trim(), 'password': _wifiPassCtrl.text});
+      final payload = json.encode({
+        'ssid': _ssidCtrl.text.trim(),
+        'password': _wifiPassCtrl.text,
+      });
       await creds.write(utf8.encode(payload), withoutResponse: false);
 
       // Read MAC address
@@ -237,12 +377,18 @@ class _DevicePairingPageState extends State<DevicePairingPage> {
       final prefs = await SharedPreferences.getInstance();
       await prefs.setString('device_mac', macStr);
 
-      setState(() { _status = 'Paired device MAC: $macStr'; });
+      setState(() {
+        _status = 'Paired device MAC: $macStr';
+      });
       await device.disconnect();
       if (mounted) Navigator.of(context).pop();
     } catch (e) {
-      setState(() { _status = 'Pairing error: $e'; });
-      try { await device.disconnect(); } catch (_) {}
+      setState(() {
+        _status = 'Pairing error: $e';
+      });
+      try {
+        await device.disconnect();
+      } catch (_) {}
     }
   }
 
@@ -255,17 +401,37 @@ class _DevicePairingPageState extends State<DevicePairingPage> {
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
-            const Text('Enter Wi-Fi credentials to provision the Raspberry Pi via BLE:'),
+            const Text(
+              'Enter Wi-Fi credentials to provision the Raspberry Pi via BLE:',
+            ),
             const SizedBox(height: 8),
-            TextField(controller: _ssidCtrl, decoration: const InputDecoration(labelText: 'Wi-Fi SSID')),
+            TextField(
+              controller: _ssidCtrl,
+              decoration: const InputDecoration(labelText: 'Wi-Fi SSID'),
+            ),
             const SizedBox(height: 8),
-            TextField(controller: _wifiPassCtrl, decoration: const InputDecoration(labelText: 'Wi-Fi Password'), obscureText: true),
+            TextField(
+              controller: _wifiPassCtrl,
+              decoration: const InputDecoration(labelText: 'Wi-Fi Password'),
+              obscureText: true,
+            ),
             const SizedBox(height: 12),
-            Row(children: [
-              ElevatedButton.icon(onPressed: _scanning ? null : _scan, icon: const Icon(Icons.search), label: const Text('Scan Devices')),
-              const SizedBox(width: 8),
-              if (_scanning) const SizedBox(width: 16, height: 16, child: CircularProgressIndicator(strokeWidth: 2)),
-            ]),
+            Row(
+              children: [
+                ElevatedButton.icon(
+                  onPressed: _scanning ? null : _scan,
+                  icon: const Icon(Icons.search),
+                  label: const Text('Scan Devices'),
+                ),
+                const SizedBox(width: 8),
+                if (_scanning)
+                  const SizedBox(
+                    width: 16,
+                    height: 16,
+                    child: CircularProgressIndicator(strokeWidth: 2),
+                  ),
+              ],
+            ),
             const SizedBox(height: 12),
             Expanded(
               child: ListView.builder(
@@ -274,17 +440,27 @@ class _DevicePairingPageState extends State<DevicePairingPage> {
                   final r = _devices[i];
                   return ListTile(
                     leading: const Icon(Icons.devices),
-                    title: Text(r.device.platformName.isNotEmpty ? r.device.platformName : r.device.remoteId.str),
+                    title: Text(
+                      r.device.platformName.isNotEmpty
+                          ? r.device.platformName
+                          : r.device.remoteId.str,
+                    ),
                     subtitle: Text('RSSI: ${r.rssi}'),
-                    trailing: ElevatedButton(onPressed: () => _pair(r), child: const Text('Pair')),
+                    trailing: ElevatedButton(
+                      onPressed: () => _pair(r),
+                      child: const Text('Pair'),
+                    ),
                   );
                 },
               ),
             ),
             if (_status != null) ...[
               const SizedBox(height: 8),
-              Text(_status!, style: const TextStyle(fontSize: 12, color: Colors.white70)),
-            ]
+              Text(
+                _status!,
+                style: const TextStyle(fontSize: 12, color: Colors.white70),
+              ),
+            ],
           ],
         ),
       ),

@@ -6,6 +6,7 @@ import 'package:flutter/material.dart';
 import 'package:http/http.dart' as http;
 import 'package:shared_preferences/shared_preferences.dart';
 import 'settings.dart';
+import 'screens/devices_list_screen.dart';
 
 void main() {
   runApp(const MediaControlsApp());
@@ -14,8 +15,13 @@ void main() {
 /// Backend base URL:
 /// - On Web: uses current origin (same-host Flask)
 /// - On Mobile/Desktop: prefer BACKEND_BASE_URL from --dart-define
-const String _kBackendBaseUrlEnv = String.fromEnvironment('BACKEND_BASE_URL', defaultValue: '');
-final String kBackendBaseUrl = _kBackendBaseUrlEnv.isNotEmpty ? _kBackendBaseUrlEnv : Uri.base.origin;
+const String _kBackendBaseUrlEnv = String.fromEnvironment(
+  'BACKEND_BASE_URL',
+  defaultValue: '',
+);
+final String kBackendBaseUrl = _kBackendBaseUrlEnv.isNotEmpty
+    ? _kBackendBaseUrlEnv
+    : Uri.base.origin;
 
 // Dummy dev credentials (front-end only, not secure).
 const String kDevUsername = 'dev';
@@ -58,27 +64,41 @@ class _LoginScreenState extends State<_LoginScreen> {
   bool _loading = false;
 
   void _submit() {
-    setState(() { _error = null; _loading = true; });
+    setState(() {
+      _error = null;
+      _loading = true;
+    });
     http
         .post(
           Uri.parse('$kBackendBaseUrl/api/auth/login'),
           headers: {'Content-Type': 'application/json'},
-          body: json.encode({'username': _userCtrl.text.trim(), 'password': _passCtrl.text}),
+          body: json.encode({
+            'username': _userCtrl.text.trim(),
+            'password': _passCtrl.text,
+          }),
         )
         .timeout(const Duration(seconds: 10))
         .then((resp) {
-      if (resp.statusCode == 200) {
-        Navigator.of(context).pushReplacement(
-          MaterialPageRoute(builder: (_) => const _DevControlsPage()),
-        );
-      } else {
-        setState(() { _error = 'Sign in failed (${resp.statusCode})'; });
-      }
-    }).catchError((e) {
-      setState(() { _error = 'Sign in error: $e'; });
-    }).whenComplete(() {
-      setState(() { _loading = false; });
-    });
+          if (resp.statusCode == 200) {
+            Navigator.of(context).pushReplacement(
+              MaterialPageRoute(builder: (_) => const _DevControlsPage()),
+            );
+          } else {
+            setState(() {
+              _error = 'Sign in failed (${resp.statusCode})';
+            });
+          }
+        })
+        .catchError((e) {
+          setState(() {
+            _error = 'Sign in error: $e';
+          });
+        })
+        .whenComplete(() {
+          setState(() {
+            _loading = false;
+          });
+        });
   }
 
   @override
@@ -90,8 +110,9 @@ class _LoginScreenState extends State<_LoginScreen> {
           child: Card(
             color: const Color(0xFF020617),
             elevation: 8,
-            shape:
-                RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+            shape: RoundedRectangleBorder(
+              borderRadius: BorderRadius.circular(16),
+            ),
             child: Padding(
               padding: const EdgeInsets.all(20),
               child: Column(
@@ -101,10 +122,7 @@ class _LoginScreenState extends State<_LoginScreen> {
                   const Text(
                     'Developer Login',
                     textAlign: TextAlign.center,
-                    style: TextStyle(
-                      fontSize: 20,
-                      fontWeight: FontWeight.w600,
-                    ),
+                    style: TextStyle(fontSize: 20, fontWeight: FontWeight.w600),
                   ),
                   const SizedBox(height: 16),
                   TextField(
@@ -121,8 +139,10 @@ class _LoginScreenState extends State<_LoginScreen> {
                     const SizedBox(height: 8),
                     Text(
                       _error!,
-                      style:
-                          const TextStyle(color: Colors.redAccent, fontSize: 13),
+                      style: const TextStyle(
+                        color: Colors.redAccent,
+                        fontSize: 13,
+                      ),
                     ),
                   ],
                   const SizedBox(height: 16),
@@ -132,7 +152,13 @@ class _LoginScreenState extends State<_LoginScreen> {
                   ),
                   if (_loading) ...[
                     const SizedBox(height: 12),
-                    const Center(child: SizedBox(width: 16, height: 16, child: CircularProgressIndicator(strokeWidth: 2))),
+                    const Center(
+                      child: SizedBox(
+                        width: 16,
+                        height: 16,
+                        child: CircularProgressIndicator(strokeWidth: 2),
+                      ),
+                    ),
                   ],
                 ],
               ),
@@ -154,10 +180,10 @@ class _MediaFile {
   _MediaFile({required this.name, required this.url, required this.type});
 
   factory _MediaFile.fromJson(Map<String, dynamic> json) => _MediaFile(
-        name: json['name'] as String? ?? '',
-        url: json['url'] as String? ?? '',
-        type: json['type'] as String? ?? 'image',
-      );
+    name: json['name'] as String? ?? '',
+    url: json['url'] as String? ?? '',
+    type: json['type'] as String? ?? 'image',
+  );
 }
 
 class _MediaManagerPage extends StatefulWidget {
@@ -180,75 +206,120 @@ class _MediaManagerPageState extends State<_MediaManagerPage> {
   @override
   void initState() {
     super.initState();
-    _checkAuth().then((_) { if (_authed) _refresh(); });
+    _checkAuth().then((_) {
+      if (_authed) _refresh();
+    });
   }
 
   Future<void> _checkAuth() async {
-    setState(() { _authLoading = true; _authError = null; });
+    setState(() {
+      _authLoading = true;
+      _authError = null;
+    });
     try {
-      final resp = await http.get(Uri.parse('$kBackendBaseUrl/api/auth/me')).timeout(const Duration(seconds: 10));
-      setState(() { _authed = resp.statusCode == 200; });
+      final resp = await http
+          .get(Uri.parse('$kBackendBaseUrl/api/auth/me'))
+          .timeout(const Duration(seconds: 10));
+      setState(() {
+        _authed = resp.statusCode == 200;
+      });
     } catch (_) {
-      setState(() { _authed = false; });
+      setState(() {
+        _authed = false;
+      });
     } finally {
-      setState(() { _authLoading = false; });
+      setState(() {
+        _authLoading = false;
+      });
     }
   }
 
   Future<void> _login() async {
-    setState(() { _authLoading = true; _authError = null; });
+    setState(() {
+      _authLoading = true;
+      _authError = null;
+    });
     try {
-      final resp = await http.post(
-        Uri.parse('$kBackendBaseUrl/api/auth/login'),
-        headers: {'Content-Type': 'application/json'},
-        body: json.encode({'username': _userCtrl.text.trim(), 'password': _passCtrl.text}),
-      ).timeout(const Duration(seconds: 10));
+      final resp = await http
+          .post(
+            Uri.parse('$kBackendBaseUrl/api/auth/login'),
+            headers: {'Content-Type': 'application/json'},
+            body: json.encode({
+              'username': _userCtrl.text.trim(),
+              'password': _passCtrl.text,
+            }),
+          )
+          .timeout(const Duration(seconds: 10));
       if (resp.statusCode == 200) {
-        setState(() { _authed = true; });
+        setState(() {
+          _authed = true;
+        });
         await _refresh();
       } else {
-        setState(() { _authError = 'Login failed (${resp.statusCode})'; });
+        setState(() {
+          _authError = 'Login failed (${resp.statusCode})';
+        });
       }
     } catch (e) {
-      setState(() { _authError = 'Login error: $e'; });
+      setState(() {
+        _authError = 'Login error: $e';
+      });
     } finally {
-      setState(() { _authLoading = false; });
+      setState(() {
+        _authLoading = false;
+      });
     }
   }
 
   Future<void> _signup() async {
-    setState(() { _authLoading = true; _authError = null; });
+    setState(() {
+      _authLoading = true;
+      _authError = null;
+    });
     try {
-      final resp = await http.post(
-        Uri.parse('$kBackendBaseUrl/api/auth/signup'),
-        headers: {'Content-Type': 'application/json'},
-        body: json.encode({'username': _userCtrl.text.trim(), 'password': _passCtrl.text}),
-      ).timeout(const Duration(seconds: 10));
+      final resp = await http
+          .post(
+            Uri.parse('$kBackendBaseUrl/api/auth/signup'),
+            headers: {'Content-Type': 'application/json'},
+            body: json.encode({
+              'username': _userCtrl.text.trim(),
+              'password': _passCtrl.text,
+            }),
+          )
+          .timeout(const Duration(seconds: 10));
       if (resp.statusCode == 200) {
-        setState(() { _authed = true; });
+        setState(() {
+          _authed = true;
+        });
         await _refresh();
       } else {
-        setState(() { _authError = 'Signup failed (${resp.statusCode})'; });
+        setState(() {
+          _authError = 'Signup failed (${resp.statusCode})';
+        });
       }
     } catch (e) {
-      setState(() { _authError = 'Signup error: $e'; });
+      setState(() {
+        _authError = 'Signup error: $e';
+      });
     } finally {
-      setState(() { _authLoading = false; });
+      setState(() {
+        _authLoading = false;
+      });
     }
   }
 
   Future<void> _refresh() async {
     setState(() => _loading = true);
     try {
-        final prefs = await SharedPreferences.getInstance();
-        _deviceMac = prefs.getString('device_mac');
-        final uri = Uri.parse('$kBackendBaseUrl/api/media/files').replace(queryParameters: {
-          if (_deviceMac != null && _deviceMac!.isNotEmpty) 'device_mac': _deviceMac!,
-        });
-        final resp =
-          await http.get(uri).timeout(
-        const Duration(seconds: 10),
+      final prefs = await SharedPreferences.getInstance();
+      _deviceMac = prefs.getString('device_mac');
+      final uri = Uri.parse('$kBackendBaseUrl/api/media/files').replace(
+        queryParameters: {
+          if (_deviceMac != null && _deviceMac!.isNotEmpty)
+            'device_mac': _deviceMac!,
+        },
       );
+      final resp = await http.get(uri).timeout(const Duration(seconds: 10));
       if (resp.statusCode == 200) {
         final data = json.decode(resp.body) as Map<String, dynamic>;
         final list = data['files'] as List<dynamic>? ?? [];
@@ -267,10 +338,15 @@ class _MediaManagerPageState extends State<_MediaManagerPage> {
   }
 
   Future<void> _pickAndUpload() async {
-    final result = await FilePicker.platform.pickFiles(allowMultiple: true, withData: true);
+    final result = await FilePicker.platform.pickFiles(
+      allowMultiple: true,
+      withData: true,
+    );
     if (result == null || result.files.isEmpty) return;
     if (!_authed) {
-      setState(() { _authError = 'Please sign in to upload.'; });
+      setState(() {
+        _authError = 'Please sign in to upload.';
+      });
       return;
     }
 
@@ -288,9 +364,13 @@ class _MediaManagerPageState extends State<_MediaManagerPage> {
       if (kIsWeb || file.path == null) {
         final bytes = file.bytes;
         if (bytes == null) continue;
-        request.files.add(http.MultipartFile.fromBytes('file', bytes, filename: file.name));
+        request.files.add(
+          http.MultipartFile.fromBytes('file', bytes, filename: file.name),
+        );
       } else {
-        request.files.add(await http.MultipartFile.fromPath('file', file.path!));
+        request.files.add(
+          await http.MultipartFile.fromPath('file', file.path!),
+        );
       }
 
       try {
@@ -324,12 +404,17 @@ class _MediaManagerPageState extends State<_MediaManagerPage> {
     if (ok != true) return;
 
     try {
-        final prefs = await SharedPreferences.getInstance();
-        final mac = prefs.getString('device_mac');
-        final resp = await http
-          .post(Uri.parse('$kBackendBaseUrl/api/media/delete'),
-              headers: {'Content-Type': 'application/json'},
-              body: json.encode({'filename': file.name, if (mac != null && mac.isNotEmpty) 'device_mac': mac}))
+      final prefs = await SharedPreferences.getInstance();
+      final mac = prefs.getString('device_mac');
+      final resp = await http
+          .post(
+            Uri.parse('$kBackendBaseUrl/api/media/delete'),
+            headers: {'Content-Type': 'application/json'},
+            body: json.encode({
+              'filename': file.name,
+              if (mac != null && mac.isNotEmpty) 'device_mac': mac,
+            }),
+          )
           .timeout(const Duration(seconds: 10));
       if (resp.statusCode == 200) {
         _refresh();
@@ -341,7 +426,9 @@ class _MediaManagerPageState extends State<_MediaManagerPage> {
 
   Future<void> _logout() async {
     try {
-      final resp = await http.post(Uri.parse('$kBackendBaseUrl/api/auth/logout')).timeout(const Duration(seconds: 10));
+      final resp = await http
+          .post(Uri.parse('$kBackendBaseUrl/api/auth/logout'))
+          .timeout(const Duration(seconds: 10));
       if (resp.statusCode == 200) {
         setState(() {
           _authed = false;
@@ -364,97 +451,153 @@ class _MediaManagerPageState extends State<_MediaManagerPage> {
       appBar: AppBar(
         title: const Text('SSSNL Media Manager'),
         actions: [
-          if (_authed)
+          if (_authed) ...[
+            IconButton(
+              icon: const Icon(Icons.devices),
+              tooltip: 'My Devices',
+              onPressed: () {
+                Navigator.of(context)
+                    .push(
+                      MaterialPageRoute(
+                        builder: (_) =>
+                            DevicesListScreen(baseUrl: kBackendBaseUrl),
+                      ),
+                    )
+                    .then((_) => _refresh());
+              },
+            ),
             IconButton(
               icon: const Icon(Icons.settings),
               onPressed: () {
-                Navigator.of(context).push(MaterialPageRoute(builder: (_) => const SettingsPage())).then((_) => _refresh());
+                Navigator.of(context)
+                    .push(
+                      MaterialPageRoute(builder: (_) => const SettingsPage()),
+                    )
+                    .then((_) => _refresh());
               },
             ),
+          ],
         ],
       ),
       body: Column(
         children: [
-          if (!_authed) Padding(
-            padding: const EdgeInsets.all(16),
-            child: Card(
-              color: const Color(0xFF020617),
-              child: Padding(
-                padding: const EdgeInsets.all(16),
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.stretch,
-                  children: [
-                    const Text('Sign in or Sign up', style: TextStyle(fontSize: 18, fontWeight: FontWeight.w600)),
-                    const SizedBox(height: 12),
-                    TextField(controller: _userCtrl, decoration: const InputDecoration(labelText: 'Username')),
-                    const SizedBox(height: 8),
-                    TextField(controller: _passCtrl, decoration: const InputDecoration(labelText: 'Password'), obscureText: true),
-                    const SizedBox(height: 12),
-                    Row(children: [
-                      ElevatedButton(onPressed: _authLoading ? null : _login, child: const Text('Sign In')),
-                      const SizedBox(width: 12),
-                      OutlinedButton(onPressed: _authLoading ? null : _signup, child: const Text('Sign Up')),
-                      if (_authLoading) ...[
-                        const SizedBox(width: 12),
-                        const SizedBox(width: 16, height: 16, child: CircularProgressIndicator(strokeWidth: 2)),
-                      ]
-                    ]),
-                    if (_authError != null) ...[
+          if (!_authed)
+            Padding(
+              padding: const EdgeInsets.all(16),
+              child: Card(
+                color: const Color(0xFF020617),
+                child: Padding(
+                  padding: const EdgeInsets.all(16),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.stretch,
+                    children: [
+                      const Text(
+                        'Sign in or Sign up',
+                        style: TextStyle(
+                          fontSize: 18,
+                          fontWeight: FontWeight.w600,
+                        ),
+                      ),
+                      const SizedBox(height: 12),
+                      TextField(
+                        controller: _userCtrl,
+                        decoration: const InputDecoration(
+                          labelText: 'Username',
+                        ),
+                      ),
                       const SizedBox(height: 8),
-                      Text(_authError!, style: const TextStyle(color: Colors.redAccent, fontSize: 12)),
-                    ]
-                  ],
+                      TextField(
+                        controller: _passCtrl,
+                        decoration: const InputDecoration(
+                          labelText: 'Password',
+                        ),
+                        obscureText: true,
+                      ),
+                      const SizedBox(height: 12),
+                      Row(
+                        children: [
+                          ElevatedButton(
+                            onPressed: _authLoading ? null : _login,
+                            child: const Text('Sign In'),
+                          ),
+                          const SizedBox(width: 12),
+                          OutlinedButton(
+                            onPressed: _authLoading ? null : _signup,
+                            child: const Text('Sign Up'),
+                          ),
+                          if (_authLoading) ...[
+                            const SizedBox(width: 12),
+                            const SizedBox(
+                              width: 16,
+                              height: 16,
+                              child: CircularProgressIndicator(strokeWidth: 2),
+                            ),
+                          ],
+                        ],
+                      ),
+                      if (_authError != null) ...[
+                        const SizedBox(height: 8),
+                        Text(
+                          _authError!,
+                          style: const TextStyle(
+                            color: Colors.redAccent,
+                            fontSize: 12,
+                          ),
+                        ),
+                      ],
+                    ],
+                  ),
                 ),
               ),
             ),
-          ),
-          if (_authed) Padding(
-            padding: const EdgeInsets.all(12),
-            child: Row(
-              children: [
-                ElevatedButton.icon(
-                  onPressed: _pickAndUpload,
-                  icon: const Icon(Icons.upload_file),
-                  label: const Text('Upload'),
-                ),
-                const SizedBox(width: 12),
-                OutlinedButton.icon(
-                  onPressed: _refresh,
-                  icon: const Icon(Icons.refresh),
-                  label: const Text('Refresh'),
-                ),
-                const SizedBox(width: 12),
-                OutlinedButton.icon(
-                  onPressed: _logout,
-                  icon: const Icon(Icons.logout),
-                  label: const Text('Logout'),
-                ),
-                if (_loading) ...[
-                  const SizedBox(width: 12),
-                  const SizedBox(
-                    width: 16,
-                    height: 16,
-                    child: CircularProgressIndicator(strokeWidth: 2),
+          if (_authed)
+            Padding(
+              padding: const EdgeInsets.all(12),
+              child: Row(
+                children: [
+                  ElevatedButton.icon(
+                    onPressed: _pickAndUpload,
+                    icon: const Icon(Icons.upload_file),
+                    label: const Text('Upload'),
                   ),
+                  const SizedBox(width: 12),
+                  OutlinedButton.icon(
+                    onPressed: _refresh,
+                    icon: const Icon(Icons.refresh),
+                    label: const Text('Refresh'),
+                  ),
+                  const SizedBox(width: 12),
+                  OutlinedButton.icon(
+                    onPressed: _logout,
+                    icon: const Icon(Icons.logout),
+                    label: const Text('Logout'),
+                  ),
+                  if (_loading) ...[
+                    const SizedBox(width: 12),
+                    const SizedBox(
+                      width: 16,
+                      height: 16,
+                      child: CircularProgressIndicator(strokeWidth: 2),
+                    ),
+                  ],
                 ],
-              ],
+              ),
             ),
-          ),
           // Settings moved to separate page; no inline settings card.
           Expanded(
             child: !_authed
                 ? const Center(child: Text('Please sign in to view your media'))
                 : _files.isEmpty
-                    ? const Center(child: Text('No media files found'))
-                    : GridView.builder(
+                ? const Center(child: Text('No media files found'))
+                : GridView.builder(
                     padding: const EdgeInsets.all(12),
                     gridDelegate:
                         const SliverGridDelegateWithFixedCrossAxisCount(
-                      crossAxisCount: 3,
-                      mainAxisSpacing: 12,
-                      crossAxisSpacing: 12,
-                      childAspectRatio: 4 / 3,
-                    ),
+                          crossAxisCount: 3,
+                          mainAxisSpacing: 12,
+                          crossAxisSpacing: 12,
+                          childAspectRatio: 4 / 3,
+                        ),
                     itemCount: _files.length,
                     itemBuilder: (ctx, index) {
                       final f = _files[index];
@@ -492,8 +635,10 @@ class _MediaManagerPageState extends State<_MediaManagerPage> {
                                   ),
                                   IconButton(
                                     onPressed: () => _deleteFile(f),
-                                    icon: const Icon(Icons.delete_outline,
-                                        size: 18),
+                                    icon: const Icon(
+                                      Icons.delete_outline,
+                                      size: 18,
+                                    ),
                                   ),
                                 ],
                               ),
@@ -557,21 +702,31 @@ class _DevControlsPageState extends State<_DevControlsPage> {
 
   Future<void> _refreshUsers() async {
     try {
-      final resp = await http.get(Uri.parse('$kBackendBaseUrl/api/admin/users')).timeout(const Duration(seconds: 10));
+      final resp = await http
+          .get(Uri.parse('$kBackendBaseUrl/api/admin/users'))
+          .timeout(const Duration(seconds: 10));
       if (resp.statusCode == 200) {
         final data = json.decode(resp.body) as Map<String, dynamic>;
-        setState(() { _users = (data['users'] as List).cast<Map<String, dynamic>>(); });
+        setState(() {
+          _users = (data['users'] as List).cast<Map<String, dynamic>>();
+        });
       }
     } catch (_) {}
   }
 
   Future<void> _addUser() async {
     try {
-      final resp = await http.post(
-        Uri.parse('$kBackendBaseUrl/api/admin/users'),
-        headers: {'Content-Type': 'application/json'},
-        body: json.encode({'username': _newUserCtrl.text.trim(), 'password': _newPassCtrl.text, 'role': _newRole}),
-      ).timeout(const Duration(seconds: 10));
+      final resp = await http
+          .post(
+            Uri.parse('$kBackendBaseUrl/api/admin/users'),
+            headers: {'Content-Type': 'application/json'},
+            body: json.encode({
+              'username': _newUserCtrl.text.trim(),
+              'password': _newPassCtrl.text,
+              'role': _newRole,
+            }),
+          )
+          .timeout(const Duration(seconds: 10));
       if (resp.statusCode == 200) {
         _newUserCtrl.clear();
         _newPassCtrl.clear();
@@ -582,7 +737,9 @@ class _DevControlsPageState extends State<_DevControlsPage> {
 
   Future<void> _deleteUser(String username) async {
     try {
-      final resp = await http.delete(Uri.parse('$kBackendBaseUrl/api/admin/users/$username')).timeout(const Duration(seconds: 10));
+      final resp = await http
+          .delete(Uri.parse('$kBackendBaseUrl/api/admin/users/$username'))
+          .timeout(const Duration(seconds: 10));
       if (resp.statusCode == 200) {
         await _refreshUsers();
       }
@@ -643,19 +800,19 @@ class _DevControlsPageState extends State<_DevControlsPage> {
                 Expanded(
                   child: TextField(
                     controller: _tempCtrl,
-                    keyboardType:
-                        const TextInputType.numberWithOptions(decimal: true),
-                    decoration: const InputDecoration(
-                      labelText: 'Temp (°C)',
+                    keyboardType: const TextInputType.numberWithOptions(
+                      decimal: true,
                     ),
+                    decoration: const InputDecoration(labelText: 'Temp (°C)'),
                   ),
                 ),
                 const SizedBox(width: 12),
                 Expanded(
                   child: TextField(
                     controller: _humCtrl,
-                    keyboardType:
-                        const TextInputType.numberWithOptions(decimal: true),
+                    keyboardType: const TextInputType.numberWithOptions(
+                      decimal: true,
+                    ),
                     decoration: const InputDecoration(
                       labelText: 'Humidity (%)',
                     ),
@@ -671,9 +828,9 @@ class _DevControlsPageState extends State<_DevControlsPage> {
                   onPressed: _sending
                       ? null
                       : () => _call('/mock-dht', {
-                            'temp': _tempCtrl.text,
-                            'hum': _humCtrl.text,
-                          }),
+                          'temp': _tempCtrl.text,
+                          'hum': _humCtrl.text,
+                        }),
                   child: const Text('Apply DHT override'),
                 ),
                 OutlinedButton(
@@ -686,52 +843,106 @@ class _DevControlsPageState extends State<_DevControlsPage> {
             ),
             const SizedBox(height: 24),
             const Divider(),
-            const Text('User Management (Admin)', style: TextStyle(fontSize: 18, fontWeight: FontWeight.w600)),
-            const SizedBox(height: 8),
-            Row(children: [
-              Expanded(child: TextField(controller: _newUserCtrl, decoration: const InputDecoration(labelText: 'Username'))),
-              const SizedBox(width: 8),
-              Expanded(child: TextField(controller: _newPassCtrl, decoration: const InputDecoration(labelText: 'Password'), obscureText: true)),
-              const SizedBox(width: 8),
-              DropdownButton<String>(
-                value: _newRole,
-                items: const [DropdownMenuItem(value: 'user', child: Text('user')), DropdownMenuItem(value: 'admin', child: Text('admin'))],
-                onChanged: (v) => setState(() { if (v != null) _newRole = v; }),
-              ),
-              const SizedBox(width: 8),
-              ElevatedButton(onPressed: _addUser, child: const Text('Add')),
-              const SizedBox(width: 8),
-              OutlinedButton(onPressed: _refreshUsers, child: const Text('Refresh')),
-            ]),
-            const SizedBox(height: 12),
-            for (final u in _users) ListTile(
-              title: Text('${u['username']}'),
-              subtitle: Text('role: ${u['role']}'),
-              trailing: IconButton(onPressed: () => _deleteUser('${u['username']}'), icon: const Icon(Icons.delete_outline)),
+            const Text(
+              'User Management (Admin)',
+              style: TextStyle(fontSize: 18, fontWeight: FontWeight.w600),
             ),
-            const Divider(),
-            const Text('Change Dev Password', style: TextStyle(fontSize: 18, fontWeight: FontWeight.w600)),
             const SizedBox(height: 8),
-            Row(children: [
-              Expanded(child: TextField(controller: _devNewPassCtrl, decoration: const InputDecoration(labelText: 'New Password'), obscureText: true)),
-              const SizedBox(width: 8),
-              ElevatedButton(
-                onPressed: () async {
-                  try {
-                    final resp = await http.post(
-                      Uri.parse('$kBackendBaseUrl/api/admin/change_password'),
-                      headers: {'Content-Type': 'application/json'},
-                      body: json.encode({'username': 'dev', 'password': _devNewPassCtrl.text}),
-                    ).timeout(const Duration(seconds: 10));
-                    setState(() { _lastMessage = resp.statusCode == 200 ? 'Dev password updated' : 'Update failed (${resp.statusCode})'; });
-                    _devNewPassCtrl.clear();
-                  } catch (e) {
-                    setState(() { _lastMessage = 'Update error: $e'; });
-                  }
-                },
-                child: const Text('Update'),
+            Row(
+              children: [
+                Expanded(
+                  child: TextField(
+                    controller: _newUserCtrl,
+                    decoration: const InputDecoration(labelText: 'Username'),
+                  ),
+                ),
+                const SizedBox(width: 8),
+                Expanded(
+                  child: TextField(
+                    controller: _newPassCtrl,
+                    decoration: const InputDecoration(labelText: 'Password'),
+                    obscureText: true,
+                  ),
+                ),
+                const SizedBox(width: 8),
+                DropdownButton<String>(
+                  value: _newRole,
+                  items: const [
+                    DropdownMenuItem(value: 'user', child: Text('user')),
+                    DropdownMenuItem(value: 'admin', child: Text('admin')),
+                  ],
+                  onChanged: (v) => setState(() {
+                    if (v != null) _newRole = v;
+                  }),
+                ),
+                const SizedBox(width: 8),
+                ElevatedButton(onPressed: _addUser, child: const Text('Add')),
+                const SizedBox(width: 8),
+                OutlinedButton(
+                  onPressed: _refreshUsers,
+                  child: const Text('Refresh'),
+                ),
+              ],
+            ),
+            const SizedBox(height: 12),
+            for (final u in _users)
+              ListTile(
+                title: Text('${u['username']}'),
+                subtitle: Text('role: ${u['role']}'),
+                trailing: IconButton(
+                  onPressed: () => _deleteUser('${u['username']}'),
+                  icon: const Icon(Icons.delete_outline),
+                ),
               ),
-            ]),
+            const Divider(),
+            const Text(
+              'Change Dev Password',
+              style: TextStyle(fontSize: 18, fontWeight: FontWeight.w600),
+            ),
+            const SizedBox(height: 8),
+            Row(
+              children: [
+                Expanded(
+                  child: TextField(
+                    controller: _devNewPassCtrl,
+                    decoration: const InputDecoration(
+                      labelText: 'New Password',
+                    ),
+                    obscureText: true,
+                  ),
+                ),
+                const SizedBox(width: 8),
+                ElevatedButton(
+                  onPressed: () async {
+                    try {
+                      final resp = await http
+                          .post(
+                            Uri.parse(
+                              '$kBackendBaseUrl/api/admin/change_password',
+                            ),
+                            headers: {'Content-Type': 'application/json'},
+                            body: json.encode({
+                              'username': 'dev',
+                              'password': _devNewPassCtrl.text,
+                            }),
+                          )
+                          .timeout(const Duration(seconds: 10));
+                      setState(() {
+                        _lastMessage = resp.statusCode == 200
+                            ? 'Dev password updated'
+                            : 'Update failed (${resp.statusCode})';
+                      });
+                      _devNewPassCtrl.clear();
+                    } catch (e) {
+                      setState(() {
+                        _lastMessage = 'Update error: $e';
+                      });
+                    }
+                  },
+                  child: const Text('Update'),
+                ),
+              ],
+            ),
             if (_sending) const LinearProgressIndicator(),
             if (_lastMessage != null) ...[
               const SizedBox(height: 12),
