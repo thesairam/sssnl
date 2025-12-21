@@ -2,7 +2,7 @@
 """Convenience launcher to start backend and prepare Flutter Web bundles.
 
 Usage (from repo root):
-  python run_all.py
+  python scripts/run_all.py
 
 Assumptions:
 - You're in the correct virtualenv so Flask deps are installed.
@@ -11,7 +11,7 @@ Assumptions:
     sssnl_media_controls/build/web_media will be served.
 -
 This is oriented for development; for Pi deployment, use systemd to
-start `app.py` and point a browser (Chromium kiosk or any device) at
+start `backend/app.py` and point a browser (Chromium kiosk or any device) at
 `http://<pi-ip>:5656/` for the HTML dashboard, or at `/dashboard`, `/media`.
 """
 
@@ -23,7 +23,7 @@ import time
 from pathlib import Path
 import os
 
-ROOT = Path(__file__).resolve().parent
+ROOT = Path(__file__).resolve().parent.parent  # Project root (one level up from scripts/)
 
 
 def ensure_flutter_web_build(app_dir: Path, out_dir: Path, base_href: str, flutter_bin: str) -> None:
@@ -119,11 +119,11 @@ def main() -> None:
             # Dev-only bundle
             ensure_flutter_web_build(media_controls_dir, media_controls_dir / "build" / "web_dev", "/dev/", flutter_bin)
 
-        # 1) Flask backend (app.py)
+        # 1) Flask backend (backend/app.py)
         procs.append(
             (
                 "backend",
-                start_process("backend", [sys.executable, "app.py"], ROOT),
+                start_process("backend", [sys.executable, "backend/app.py"], ROOT),
             )
         )
 

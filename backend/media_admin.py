@@ -7,7 +7,9 @@ from werkzeug.utils import secure_filename
 
 bp = Blueprint('media_admin', __name__)
 
+# Optional API key configured via environment; if not set, auth is disabled.
 API_KEY = os.environ.get('SSSNL_MEDIA_API_KEY')
+
 ALLOWED_TARGETS = {'media'}
 ALLOWED_EXT = {'jpg', 'jpeg', 'png', 'gif', 'webp', 'mp4', 'mov', 'm4v', 'avi', 'webm'}
 
@@ -19,6 +21,11 @@ def is_allowed_filename(filename: str) -> bool:
 
 
 def is_authenticated(req):
+    """Allow if API key matches or a user is logged in via session.
+
+    When no API key is configured, require session user for modifying operations.
+    """
+    # API key path
     if API_KEY:
         key = req.headers.get('X-API-KEY') or req.args.get('api_key')
         if not key and req.method == 'POST':
@@ -26,19 +33,16 @@ def is_authenticated(req):
             key = req.form.get('api_key') or data.get('api_key')
         if key == API_KEY:
             return True
+    # Session path
     return session.get('user_id') is not None
 
 
-def static_root() -> pathlib.Path:
-    # backend folder is app root; static is at project root
-    return pathlib.Path(current_app.root_path).parent / 'static'
-
-
 def static_target_dir(target: str, device_mac: str | None = None) -> str:
-    root = static_root()
+    root = pathlib.Path(current_app.root_path) / 'static'
     user = session.get('user_id') or 'anon'
     dest = root / target / user
     if device_mac:
+        # Nest under device-specific folder when provided
         dest = dest / secure_filename(device_mac)
     dest.mkdir(parents=True, exist_ok=True)
     return str(dest)
@@ -87,7 +91,7 @@ def list_files():
         return jsonify({'error': 'unauthorized'}), 401
     user = session.get('user_id') or 'anon'
     device_mac = request.args.get('device_mac')
-    base = static_root() / 'media' / user
+    base = pathlib.Path(current_app.root_path) / 'static' / 'media' / user
     root = base / secure_filename(device_mac) if device_mac else base
     files = []
     if root.exists():
@@ -114,7 +118,7 @@ def delete_file():
     if not filename:
         return jsonify({'error': 'filename required'}), 400
     user = session.get('user_id') or 'anon'
-    base = static_root() / 'media' / user
+    base = pathlib.Path(current_app.root_path) / 'static' / 'media' / user
     path = (base / secure_filename(device_mac) / filename) if device_mac else (base / filename)
     if not path.exists() or not path.is_file():
         return jsonify({'error': 'not found'}), 404
@@ -164,6 +168,7 @@ def info():
 
 @bp.route('/manage', methods=['GET'])
 def manage_ui():
+    # Single-page UI for viewing, uploading, and deleting media in one place
     return (
         "<!doctype html><html><head><meta charset='utf-8'>"
         "<meta name='viewport' content='width=device-width,initial-scale=1'>"
