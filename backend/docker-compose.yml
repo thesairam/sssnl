@@ -1,0 +1,45 @@
+services:
+  mariadb:
+    image: mariadb:11.4
+    restart: unless-stopped
+    environment:
+      - MARIADB_ROOT_PASSWORD=${MARIADB_ROOT_PASSWORD:-rootpass}
+      - MARIADB_DATABASE=${MARIADB_DATABASE:-sssnl}
+      - MARIADB_USER=${MARIADB_USER:-dbadmin}
+      - MARIADB_PASSWORD=${MARIADB_PASSWORD:-dbadmin}
+    ports:
+      - "3306:3306"
+    volumes:
+      - ../data/mariadb:/var/lib/mysql
+    healthcheck:
+      test: ["CMD", "bash", "-lc", "mariadb-admin ping -uroot -p${MARIADB_ROOT_PASSWORD:-rootpass}" ]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
+  backend:
+    image: python:3.12-slim
+    restart: unless-stopped
+    working_dir: /workspace
+    environment:
+      - PYTHONUNBUFFERED=1
+      - HOME=/workspace
+      - DB_URI=mysql+pymysql://dbadmin:dbadmin@mariadb:3306/sssnl
+      - SSSNL_ADMIN_USER=dbadmin
+      - SSSNL_ADMIN_PASS=dbadmin
+    volumes:
+      - ..:/workspace
+    ports:
+      - "5656:5656"
+    # Run as host user to prevent root-owned files on the mount; falls back to 1000:1000
+    user: "${HOST_UID:-1000}:${HOST_GID:-1000}"
+    command: >-
+      bash -lc "\
+      python -m venv .venv && \
+      . .venv/bin/activate && \
+      pip install --upgrade pip && \
+      pip install -r backend/requirements.txt && \
+      exec python -m backend.app"
+    depends_on:
+      mariadb:
+        condition: service_healthy
