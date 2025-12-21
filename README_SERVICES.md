@@ -7,6 +7,27 @@ This guide explains how to run SSSNL as services so it starts at boot and runs i
 - Browser in kiosk mode (Chromium) – points to `http://localhost:5656/dashboard`.
 - Optional timer – runs `fetch_message.py` daily to download images into `static/media`.
 
+### Database (MariaDB)
+This backend can use MariaDB instead of SQLite. A ready-to-use `docker-compose.yml` is provided.
+
+Quick start:
+```bash
+cd /home/<user>/sssnl
+docker compose up -d mariadb
+
+# optional Adminer UI for browsing the DB
+docker compose up -d adminer
+```
+
+Environment for the backend:
+```bash
+export DB_URI="mysql+pymysql://dbadmin:dbadmin@localhost:3306/sssnl"
+# optional admin seed (overrides default)
+export SSSNL_ADMIN_USER=dbadmin
+export SSSNL_ADMIN_PASS=dbadmin
+```
+If `DB_URI` is not set, the app falls back to a local SQLite file at `data/users.db`.
+
 ## Raspberry Pi Setup
 
 Prereqs:
@@ -38,6 +59,9 @@ WorkingDirectory=/home/<user>/sssnl
 Environment=PYTHONUNBUFFERED=1
 ExecStart=/home/<user>/sssnl/sssnlvenv/bin/python app.py
 Restart=on-failure
+Environment=DB_URI=mysql+pymysql://dbadmin:dbadmin@localhost:3306/sssnl
+Environment=SSSNL_ADMIN_USER=dbadmin
+Environment=SSSNL_ADMIN_PASS=dbadmin
 
 [Install]
 WantedBy=multi-user.target
