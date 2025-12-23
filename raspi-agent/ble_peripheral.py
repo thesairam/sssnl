@@ -14,7 +14,7 @@ except Exception as import_err:
     print("If you still see issues, also install: libglib2.0-dev libdbus-1-dev libbluetooth-dev")
     raise
 
-from backend_client import ensure_registered
+from backend_client import ensure_registered, run_heartbeat_loop
 
 # BLE UUIDs must match the mobile app
 SERVICE_UUID = '0000ffff-0000-1000-8000-00805f9b34fb'
@@ -32,6 +32,7 @@ DBUS_PROP_IFACE = 'org.freedesktop.DBus.Properties'
 ADAPTER_IFACE = 'org.bluez.Adapter1'
 
 MAIN_LOOP: Optional[GLib.MainLoop] = None
+HEARTBEAT_THREAD: Optional[threading.Thread] = None
 
 
 def get_adapter_path():
@@ -127,7 +128,13 @@ class CredentialsCharacteristic(Characteristic):
             write_wifi(ssid, password)
             # Register with backend and claim if pairing code supplied
             device_id, device_token = ensure_registered(pairing_code=pairing_code or None)
-            print('Registered device:', device_id)
+            if device_id:
+                print('Registered device:', device_id)
+                # Start heartbeat loop once device is registered
+                global HEARTBEAT_THREAD
+                if HEARTBEAT_THREAD is None or not HEARTBEAT_THREAD.is_alive():
+                    HEARTBEAT_THREAD = threading.Thread(target=run_heartbeat_loop, daemon=True)
+                    HEARTBEAT_THREAD.start()
         except Exception as e:
             print('WriteValue error:', e)
 

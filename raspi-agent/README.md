@@ -36,7 +36,7 @@ pip install --prefer-binary -r requirements.txt
 ```
 3. Set backend URL:
 ```bash
-export BACKEND_BASE_URL="http://<your_backend_host>:5656"
+export BACKEND_BASE_URL="http://:192.168.29.38:5656"
 ```
 4. Run BLE provisioning service:
 ```bash
