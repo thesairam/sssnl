@@ -1,3 +1,5 @@
 # Python virtual environment
 sssnlvenv/
 google-chrome-stable_current_amd64.deb
+.venv/
+raspi-agent/.venv

@@ -85,18 +85,16 @@ class _CookieClient extends http.BaseClient {
 
     final resp = await _inner.send(request);
 
-    // Capture Set-Cookie (Flask session)
+    // Capture Set-Cookie (Flask session). Some stacks send multiple cookies
+    // in a single header; search for 'session=' anywhere.
     try {
       final setCookie = resp.headers['set-cookie'];
       if (setCookie != null && setCookie.isNotEmpty) {
-        // Extract 'session=...;' robustly
-        final match = RegExp(r'(?:^|,)[^s]*session=([^;]+)')
+        final match = RegExp(r'session=([^;]+)', caseSensitive: false)
             .firstMatch(setCookie);
-        if (match != null) {
-          final value = match.group(1);
-          if (value != null && value.isNotEmpty) {
-            await _CookieStore.set('session=$value');
-          }
+        final value = match?.group(1);
+        if (value != null && value.isNotEmpty) {
+          await _CookieStore.set('session=$value');
         }
       }
     } catch (_) {

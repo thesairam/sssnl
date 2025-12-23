@@ -1,6 +1,6 @@
 # SSSNL (Web‑Only)
 
-A simple, web‑only dashboard and media manager. The Flask backend reads sensors on Raspberry Pi (PIR + DHT), serves a full‑screen HTML dashboard, and optionally serves two Flutter Web UIs (dashboard and media/dev). Works on Pi and any Linux/desktop browser.
+A simple dashboard and media manager. The Flask backend reads sensors on Raspberry Pi (PIR + DHT), serves a full‑screen HTML dashboard, and optionally serves two Flutter Web UIs (dashboard and media/dev). Works on Pi and any Linux/desktop browser. A Raspberry Pi BLE agent is available to provision devices (Wi‑Fi + pairing) from a mobile app.
 
 ## Quick Start
 
@@ -29,6 +29,11 @@ Open:
 - Status API: http://localhost:5656/status
 - Playlist API: http://localhost:5656/playlist
 - Media manager (HTML): http://localhost:5656/media/manage
+ 
+Auth defaults:
+- Admin username: `dbadmin`
+- Admin password: `dbadmin`
+You can override seeding via `SSSNL_ADMIN_USER` and `SSSNL_ADMIN_PASS`.
 
 ## Media Management (APIs)
 
@@ -73,9 +78,26 @@ GPIO/DHT notes:
 
 For kiosk + boot startup (systemd), see README_SERVICES.md.
 
+## Device Provisioning via BLE (Pi + Mobile)
+- The Raspberry Pi agent exposes a BLE GATT service to read the MAC and write Wi‑Fi credentials + pairing code.
+- Mobile app filters to LE, connectable devices advertising the provisioning UUID and auto‑sends credentials after pairing.
+- See setup and troubleshooting in [raspi-agent/README.md](raspi-agent/README.md).
+
+Mobile dev run:
+```bash
+# Media controls app (Android/iOS):
+cd sssnl_media_controls
+flutter run -d <device-id> --dart-define=BACKEND_BASE_URL=http://<backend-host>:5656
+
+# Dashboard web app:
+cd ../sssnl_app
+flutter run -d chrome --web-hostname=0.0.0.0 --web-port 5173 --dart-define=BACKEND_BASE_URL=http://<backend-host>:5656
+```
+
 ## Troubleshooting
 
 - Web routes 500 for `/dashboard` or `/media`: build the Flutter Web bundles first.
 - No motion/DHT: check wiring, groups, and `libgpiod2`. You can simulate via `/mock-*` endpoints.
 - Chromium kiosk blank: ensure `DISPLAY=:0` and `.Xauthority` path for your user.
 - Port conflicts: edit the port in `backend/app.py` or stop other processes.
+- BLE provisioning not discoverable: ensure Pi agent is running, Bluetooth enabled, and BlueZ supports LE advertising; see `raspi-agent/check_env.py`.

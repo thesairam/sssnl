@@ -35,6 +35,12 @@ python3 -m pip install -U pip setuptools wheel
 pip config set global.extra-index-url https://www.piwheels.org/simple
 pip install --prefer-binary -r requirements.txt
 ```
+
+Optional one-shot setup script (as root):
+```bash
+cd raspi-agent
+sudo ./setup_pi.sh
+```
 3. Set backend URL:
 ```bash
 export BACKEND_BASE_URL="http://:192.168.29.38:5656"
@@ -107,6 +113,11 @@ Troubleshooting
   3) Run with explicit venv Python: `sudo -E $(pwd)/.venv/bin/python ble_peripheral.py`
 - No Bluetooth adapter found → enable Bluetooth: `sudo rfkill unblock all` and ensure BlueZ is running: `sudo systemctl status bluetooth`
 - `bluetoothctl` permission issues → run the agent with `sudo -E` or add your user to the `bluetooth` group and restart.
+ - Quick preflight to validate environment:
+   ```bash
+   cd raspi-agent
+   ./check_env.py
+   ```
 
 Backend client
 - After Wi‑Fi credentials are written over BLE, the agent auto-registers the device and starts a background heartbeat loop. No separate service is needed.

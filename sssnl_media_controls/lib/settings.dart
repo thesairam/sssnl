@@ -230,9 +230,17 @@ class _DevicePairingPageState extends State<DevicePairingPage> {
     }
     setState(() { _scanning = true; _status = null; });
     try {
+      // Start a short scan and filter results to LE peripherals advertising our service and connectable
       await FlutterBluePlus.startScan(timeout: const Duration(seconds: 6));
       final subs = FlutterBluePlus.scanResults.listen((results) {
-        setState(() { _devices = results; });
+        final filtered = results.where((r) {
+          final ad = r.advertisementData;
+          final svcs = ad.serviceUuids.map((u) => u.toString().toLowerCase()).toList(growable: false);
+          final hasSvc = svcs.contains(serviceUuid);
+          final connectable = ad.connectable == true;
+          return hasSvc && connectable;
+        }).toList(growable: false);
+        setState(() { _devices = filtered; });
       });
       await Future.delayed(const Duration(seconds: 6));
       await FlutterBluePlus.stopScan();
@@ -292,7 +300,7 @@ class _DevicePairingPageState extends State<DevicePairingPage> {
         }
       } catch (_) {}
 
-      // Send Wi-Fi credentials and pairing code as JSON
+      // Send Wi‑Fi credentials and pairing code as JSON right after connect/discover
       final payload = json.encode({'ssid': _ssidCtrl.text.trim(), 'password': _wifiPassCtrl.text, 'pairing_code': pairingCode});
       await creds.write(utf8.encode(payload), withoutResponse: false);
 
@@ -317,7 +325,7 @@ class _DevicePairingPageState extends State<DevicePairingPage> {
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
-            const Text('Enter Wi-Fi credentials to provision the Raspberry Pi via BLE:'),
+            const Text('Enter Wi‑Fi credentials; they will be sent automatically after pairing:'),
             const SizedBox(height: 8),
             TextField(controller: _ssidCtrl, decoration: const InputDecoration(labelText: 'Wi-Fi SSID')),
             const SizedBox(height: 8),
@@ -334,11 +342,18 @@ class _DevicePairingPageState extends State<DevicePairingPage> {
                 itemCount: _devices.length,
                 itemBuilder: (ctx, i) {
                   final r = _devices[i];
+                  final ad = r.advertisementData;
+                  final svcs = ad.serviceUuids.map((u) => u.toString().toLowerCase()).toList(growable: false);
+                  final hasSvc = svcs.contains(serviceUuid);
+                  final isLeConnectable = ad.connectable == true;
                   return ListTile(
                     leading: const Icon(Icons.devices),
                     title: Text(r.device.platformName.isNotEmpty ? r.device.platformName : r.device.remoteId.str),
-                    subtitle: Text('RSSI: ${r.rssi}'),
-                    trailing: ElevatedButton(onPressed: () => _pair(r), child: const Text('Pair')),
+                    subtitle: Text('RSSI: ${r.rssi} • LE: ${isLeConnectable ? 'yes' : 'no'} • SVC: ${hasSvc ? 'ok' : 'missing'}'),
+                    trailing: ElevatedButton(
+                      onPressed: _ssidCtrl.text.trim().isEmpty ? null : () => _pair(r),
+                      child: const Text('Pair & Send'),
+                    ),
                   );
                 },
               ),

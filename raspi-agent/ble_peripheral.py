@@ -208,12 +208,18 @@ def register_gatt(app):
 
 def advertise():
     # Advertising via bluetoothctl quick method; ensure LE advertising is enabled and connectable
-    os.system('bluetoothctl --timeout 1 power on')
-    os.system('bluetoothctl --timeout 1 agent NoInputNoOutput')
-    os.system('bluetoothctl --timeout 1 default-agent')
-    os.system('bluetoothctl --timeout 1 set-alias SSSNL-Device')
-    # Prefer LE only advertising; bluez on some platforms requires experimental for full GATT
-    os.system('bluetoothctl --timeout 1 advertise yes')
+    cmds = [
+        'bluetoothctl --timeout 1 power on',
+        'bluetoothctl --timeout 1 agent NoInputNoOutput',
+        'bluetoothctl --timeout 1 default-agent',
+        'bluetoothctl --timeout 1 set-alias SSSNL-Device',
+    ]
+    for c in cmds:
+        os.system(c)
+    # Prefer LE only advertising; fallback to legacy 'advertising on' for older BlueZ
+    rc = os.system('bluetoothctl --timeout 1 advertise yes')
+    if rc != 0:
+        os.system('bluetoothctl --timeout 1 advertising on')
 
 
 def main():

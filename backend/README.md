@@ -32,6 +32,16 @@ sudo docker compose ps
 ```
 Backend will listen on `http://localhost:5656`.
 
+## Auth Defaults
+- Admin username: `dbadmin`
+- Admin password: `dbadmin`
+These are seeded on first start (or overridden via `SSSNL_ADMIN_USER` / `SSSNL_ADMIN_PASS`).
+
+Notes for clients:
+- CORS is enabled with credentials; web/mobile must send and persist cookies.
+- Mobile app should run with `--dart-define=BACKEND_BASE_URL=http://<backend-host>:5656`.
+
+
 ## Run backend + MariaDB via Compose (optional)
 This brings up MariaDB and the backend together using the compose file in this folder.
 
@@ -40,7 +50,7 @@ Option A — without sudo (recommended):
 cd backend
 export HOST_UID=$(id -u)
 export HOST_GID=$(id -g)
-docker compose up -d
+sudo docker compose up -d
 ```
 
 Option B — with sudo (when your user can't access Docker yet):
@@ -54,6 +64,13 @@ Verify and view logs:
 docker compose ps
 docker compose logs -f backend
 docker compose logs -f mariadb
+```
+
+If running compose with `sudo`, preserve UID/GID mapping so mounted files are writable by your user:
+```bash
+export HOST_UID=$(id -u)
+export HOST_GID=$(id -g)
+sudo --preserve-env=HOST_UID,HOST_GID env HOST_UID=$HOST_UID HOST_GID=$HOST_GID docker compose up -d
 ```
 
 Stop everything:
@@ -111,6 +128,11 @@ Key device endpoints (new):
 - `SSSNL_ADMIN_USER`, `SSSNL_ADMIN_PASS`: seeded admin on startup.
 - `SSSNL_MEDIA_API_KEY`: optional API key for `/api/media/*` endpoints.
 - `CORS_ORIGINS`: comma-separated list of allowed origins for web/mobile apps.
+
+## Mobile & Provisioning
+- Android/iOS app can pair to the Pi via BLE and send Wi‑Fi credentials automatically after pairing.
+- BLE service UUID: `0000ffff-0000-1000-8000-00805f9b34fb`.
+- See provisioning flow and Pi agent setup in [raspi-agent/README.md](../raspi-agent/README.md).
 
 Troubleshooting
 - Permission denied on Docker socket:
