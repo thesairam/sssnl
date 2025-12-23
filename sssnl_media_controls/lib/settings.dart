@@ -13,6 +13,54 @@ import 'package:flutter_blue_plus/flutter_blue_plus.dart';
 const String _kBackendBaseUrlEnv = String.fromEnvironment('BACKEND_BASE_URL', defaultValue: '');
 final String kBackendBaseUrl = _kBackendBaseUrlEnv.isNotEmpty ? _kBackendBaseUrlEnv : Uri.base.origin;
 
+// Local cookie-aware client for settings page requests.
+class _CookieStore {
+  static const _cookieKey = 'session_cookie';
+  static String? _cookie;
+  static Future<String?> get() async {
+    if (_cookie != null) return _cookie;
+    final prefs = await SharedPreferences.getInstance();
+    _cookie = prefs.getString(_cookieKey);
+    return _cookie;
+  }
+  static Future<void> set(String? cookie) async {
+    _cookie = cookie;
+    final prefs = await SharedPreferences.getInstance();
+    if (cookie == null || cookie.isEmpty) {
+      await prefs.remove(_cookieKey);
+    } else {
+      await prefs.setString(_cookieKey, cookie);
+    }
+  }
+}
+
+class _CookieClient extends http.BaseClient {
+  final http.Client _inner = http.Client();
+  @override
+  Future<http.StreamedResponse> send(http.BaseRequest request) async {
+    final cookie = await _CookieStore.get();
+    if (cookie != null && cookie.isNotEmpty) {
+      request.headers.putIfAbsent('Cookie', () => cookie);
+    }
+    final resp = await _inner.send(request);
+    try {
+      final setCookie = resp.headers['set-cookie'];
+      if (setCookie != null && setCookie.isNotEmpty) {
+        final match = RegExp(r'(?:^|,)[^s]*session=([^;]+)').firstMatch(setCookie);
+        if (match != null) {
+          final value = match.group(1);
+          if (value != null && value.isNotEmpty) {
+            await _CookieStore.set('session=$value');
+          }
+        }
+      }
+    } catch (_) {}
+    return resp;
+  }
+}
+
+final http.Client _api = _CookieClient();
+
 class SettingsPage extends StatefulWidget {
   const SettingsPage({super.key});
 
@@ -44,7 +92,7 @@ class _SettingsPageState extends State<SettingsPage> {
   Future<void> _changePassword() async {
     setState(() { _msg = null; });
     try {
-      final resp = await http.post(
+      final resp = await _api.post(
         Uri.parse('$kBackendBaseUrl/api/user/change_password'),
         headers: {'Content-Type': 'application/json'},
         body: json.encode({'old_password': _oldPassCtrl.text, 'new_password': _newPassCtrl.text}),
@@ -62,7 +110,7 @@ class _SettingsPageState extends State<SettingsPage> {
   Future<void> _changeUsername() async {
     setState(() { _msg = null; });
     try {
-      final resp = await http.post(
+      final resp = await _api.post(
         Uri.parse('$kBackendBaseUrl/api/user/change_username'),
         headers: {'Content-Type': 'application/json'},
         body: json.encode({'new_username': _newUsernameCtrl.text.trim().toLowerCase(), 'password': _verifyPassCtrl.text}),
@@ -226,13 +274,27 @@ class _DevicePairingPageState extends State<DevicePairingPage> {
         return;
       }
 
-      // Send Wi-Fi credentials: SSID + password as JSON
-      final payload = json.encode({'ssid': _ssidCtrl.text.trim(), 'password': _wifiPassCtrl.text});
-      await creds.write(utf8.encode(payload), withoutResponse: false);
-
-      // Read MAC address
+      // Read MAC address first
       final macBytes = await mac.read();
       final macStr = utf8.decode(macBytes);
+
+      // Get pairing code from backend (bind by MAC)
+      String pairingCode = '';
+      try {
+        final resp = await _api.post(
+          Uri.parse('$kBackendBaseUrl/api/devices/pair_by_mac'),
+          headers: {'Content-Type': 'application/json'},
+          body: json.encode({'mac': macStr, 'ttl_sec': 300}),
+        ).timeout(const Duration(seconds: 10));
+        if (resp.statusCode == 200) {
+          final data = json.decode(resp.body) as Map<String, dynamic>;
+          pairingCode = (data['pairing_code'] as String?) ?? '';
+        }
+      } catch (_) {}
+
+      // Send Wi-Fi credentials and pairing code as JSON
+      final payload = json.encode({'ssid': _ssidCtrl.text.trim(), 'password': _wifiPassCtrl.text, 'pairing_code': pairingCode});
+      await creds.write(utf8.encode(payload), withoutResponse: false);
 
       final prefs = await SharedPreferences.getInstance();
       await prefs.setString('device_mac', macStr);

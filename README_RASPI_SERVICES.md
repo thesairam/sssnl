@@ -31,7 +31,7 @@ pip install --upgrade pip
 pip install -r requirements.txt
 
 # 4) Run backend
-python app.py
+python -m backend.app
 # Visit http://localhost:5656/dashboard (or from another device: http://<pi-ip>:5656/dashboard)
 ```
 
@@ -42,7 +42,7 @@ If you see “dashboard running” logs and the page loads, you’re good. Stop 
 ## GPIO/DHT Notes
 
 - PIR: uses BCM pin 17 (`PIR_PIN=17`).
-- DHT11/DHT22: uses BCM pin 4 (`DHT_PIN=4`). Set `DHT_TYPE` in `app.py` if needed.
+- DHT11/DHT22: uses BCM pin 4 (`DHT_PIN=4`). Set `DHT_TYPE` in `backend/app.py` if needed.
 - The code prefers the Adafruit CircuitPython DHT driver via Blinka. Ensure `libgpiod2` is installed (done above).
 - You don’t need root if your user is in the proper groups. Add once, then reboot:
 
@@ -71,7 +71,7 @@ pip install -r requirements.txt
 To test manually:
 
 ```bash
-python app.py
+python -m backend.app
 # Open http://localhost:5656/dashboard in a browser (or http://<pi-ip>:5656/dashboard)
 ```
 
@@ -79,13 +79,13 @@ Stop it (Ctrl+C) before configuring systemd.
 
 ---
 
-## 2. Backend Service (Flask `app.py`)
+## 2. Backend Service (Flask `backend.app`)
 
 Create `/etc/systemd/system/sssnl-backend.service`:
 
 ```ini
 [Unit]
-Description=SSSNL Flask backend (app.py)
+Description=SSSNL Flask backend (backend.app)
 After=network.target
 
 [Service]
@@ -93,7 +93,7 @@ Type=simple
 User=<user>
 WorkingDirectory=/home/<user>/sssnl
 Environment=PYTHONUNBUFFERED=1
-ExecStart=/home/<user>/sssnl/sssnlvenv/bin/python app.py
+ExecStart=/home/<user>/sssnl/sssnlvenv/bin/python -m backend.app
 Restart=on-failure
 
 [Install]
@@ -118,7 +118,7 @@ Backend routes:
 - `/` – HTML dashboard (autoplay playlist driven by motion/DHT status)
 - `/status` – JSON status (temp, humidity, motion)
 - `/playlist` – JSON playlist from `static/media`
-- `/api/media/*` – media upload/list/delete/fetch (see `media_admin.py`)
+- `/api/media/*` – media upload/list/delete/fetch (see `backend/media_admin.py`)
 - `/mock-*` – mock motion & DHT endpoints for development
 - `/dashboard`, `/media`, `/dev` – optional Flutter Web apps (see below)
 

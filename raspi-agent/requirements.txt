@@ -1,0 +1,4 @@
+bleak==0.22.3
+requests==2.32.3
+pydbus==0.6.0
+PyGObject==3.46.0

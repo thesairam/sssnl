@@ -241,10 +241,11 @@ class _DashboardScreenState extends State<DashboardScreen> {
 
   Future<List<PlaylistItem>> _fetchPlaylist() async {
     try {
-      final uri = Uri.parse('$kBackendBaseUrl/playlist').replace(queryParameters: {
-        if (kDeviceMacParam != null && kDeviceMacParam!.isNotEmpty) 'device_mac': kDeviceMacParam!,
-      });
-      final resp = await http.get(uri);
+      final bool hasMac = kDeviceMacParam != null && kDeviceMacParam!.isNotEmpty;
+      final Uri uri = hasMac
+          ? Uri.parse('$kBackendBaseUrl/api/public/playlist_by_mac').replace(queryParameters: {'mac': kDeviceMacParam!})
+          : Uri.parse('$kBackendBaseUrl/playlist');
+      final resp = await http.get(uri).timeout(const Duration(seconds: 12));
       if (resp.statusCode != 200) return const [];
       final data = json.decode(resp.body) as Map<String, dynamic>;
       final list = data['playlist'] as List<dynamic>? ?? const [];

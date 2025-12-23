@@ -10,7 +10,25 @@ pip install -r requirements.txt
 export DB_URI="mysql+pymysql://dbadmin:dbadmin@localhost:3306/sssnl"
 export SSSNL_ADMIN_USER=dbadmin
 export SSSNL_ADMIN_PASS=dbadmin
-python -m backend.app
+# Allow frontends on other ports (optional, comma-separated)
+export CORS_ORIGINS="http://localhost:5656,http://localhost:3000,http://localhost:5173"
+# Run from inside this folder:
+python -m app
+
+
+bash -lc "set -e
+cd /home/gayathri/projects/sssnl/backend
+export HOST_UID=$(id -u)
+export HOST_GID=$(id -g)
+sudo --preserve-env=HOST_UID,HOST_GID env HOST_UID=$HOST_UID HOST_GID=$HOST_GID docker compose down -v --remove-orphans || true
+sudo --preserve-env=HOST_UID,HOST_GID env HOST_UID=$HOST_UID HOST_GID=$HOST_GID docker compose pull || true
+sudo --preserve-env=HOST_UID,HOST_GID env HOST_UID=$HOST_UID HOST_GID=$HOST_GID docker compose up -d
+sudo docker compose ps
+"
+
+
+# Alternatively, from the repository root use:
+# python -m backend.app
 ```
 Backend will listen on `http://localhost:5656`.
 
@@ -80,10 +98,19 @@ Troubleshooting:
 ## API docs
 See [docs/api.md](docs/api.md) for endpoint reference used by frontend developers.
 
+Key device endpoints (new):
+- `POST /api/devices/register` – from device: body `{mac, name?}` -> returns `{device_id, device_token}`
+- `POST /api/devices/<device_id>/heartbeat` – from device with `{device_token}`
+- `POST /api/devices/<device_id>/claim` – from device (after user initiated pairing) with `{device_token, pairing_code}`
+- `POST /api/devices/pair_by_mac` – from signed-in user: `{mac}` -> returns `{pairing_code, expires}`
+- `GET /api/devices` – from signed-in user: list owned devices
+- `POST /api/devices/<device_id>/rename` – rename owned device
+
 ## Configuration
 - `DB_URI`: SQLAlchemy database URI. Defaults to `sqlite:///backend/data/users.db`.
 - `SSSNL_ADMIN_USER`, `SSSNL_ADMIN_PASS`: seeded admin on startup.
 - `SSSNL_MEDIA_API_KEY`: optional API key for `/api/media/*` endpoints.
+- `CORS_ORIGINS`: comma-separated list of allowed origins for web/mobile apps.
 
 Troubleshooting
 - Permission denied on Docker socket:

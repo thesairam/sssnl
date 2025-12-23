@@ -3,7 +3,7 @@
 This guide explains how to run SSSNL as services so it starts at boot and runs in the background. It focuses on Raspberry Pi (recommended) but applies to other Linux systems with minor changes.
 
 ## What runs
-- Flask backend (`app.py`) – serves the HTML dashboard and APIs.
+- Flask backend (`backend.app`) – serves the HTML dashboard and APIs.
 - Browser in kiosk mode (Chromium) – points to `http://localhost:5656/dashboard`.
 - Optional timer – runs `fetch_message.py` daily to download images into `static/media`.
 
@@ -57,7 +57,7 @@ Type=simple
 User=<user>
 WorkingDirectory=/home/<user>/sssnl
 Environment=PYTHONUNBUFFERED=1
-ExecStart=/home/<user>/sssnl/sssnlvenv/bin/python app.py
+ExecStart=/home/<user>/sssnl/sssnlvenv/bin/python -m backend.app
 Restart=on-failure
 Environment=DB_URI=mysql+pymysql://dbadmin:dbadmin@localhost:3306/sssnl
 Environment=SSSNL_ADMIN_USER=dbadmin

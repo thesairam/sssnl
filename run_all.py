@@ -11,7 +11,7 @@ Assumptions:
     sssnl_media_controls/build/web_media will be served.
 -
 This is oriented for development; for Pi deployment, use systemd to
-start `app.py` and point a browser (Chromium kiosk or any device) at
+start `backend.app` and point a browser (Chromium kiosk or any device) at
 `http://<pi-ip>:5656/` for the HTML dashboard, or at `/dashboard`, `/media`.
 """
 
@@ -119,11 +119,11 @@ def main() -> None:
             # Dev-only bundle
             ensure_flutter_web_build(media_controls_dir, media_controls_dir / "build" / "web_dev", "/dev/", flutter_bin)
 
-        # 1) Flask backend (app.py)
+        # 1) Flask backend (backend.app)
         procs.append(
             (
                 "backend",
-                start_process("backend", [sys.executable, "app.py"], ROOT),
+                start_process("backend", [sys.executable, "-m", "backend.app"], ROOT),
             )
         )
 

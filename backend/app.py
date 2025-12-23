@@ -31,6 +31,7 @@ except Exception:
     _DHT_LIB = 'mock'
 
 from flask import Flask, render_template_string, jsonify, request, send_from_directory, redirect, session
+from flask_cors import CORS
 from werkzeug.security import generate_password_hash, check_password_hash
 from sqlalchemy import create_engine, text, Table, Column, Integer, String, MetaData
 from sqlalchemy.engine import Engine
@@ -55,6 +56,19 @@ GPIO.setup(PIR_PIN, GPIO.IN)
 app = Flask(__name__)
 app.secret_key = os.environ.get('FLASK_SECRET_KEY', 'dev-secret-sssnl')
 
+# Configure CORS to allow web/mobile dev origins with credentials
+_cors_origins = os.environ.get('CORS_ORIGINS', '')
+if _cors_origins:
+    _allowed_origins = [o.strip() for o in _cors_origins.split(',') if o.strip()]
+else:
+    _allowed_origins = [
+        'http://localhost:5656', 'http://127.0.0.1:5656',
+        'http://localhost:3000', 'http://127.0.0.1:3000',
+        'http://localhost:5173', 'http://127.0.0.1:5173',
+        'http://localhost:8080', 'http://127.0.0.1:8080',
+    ]
+CORS(app, origins=_allowed_origins, supports_credentials=True)
+
 # Paths relative to project root
 PROJECT_ROOT = os.path.dirname(os.path.dirname(__file__))
 STATIC_DIR = os.path.join(PROJECT_ROOT, 'static')
@@ -77,6 +91,31 @@ users_table = Table(
     Column('role', String(32), nullable=False, default='user'),
     Column('created_at', Integer, nullable=False),
 )
+
+# Devices table: identity, ownership, pairing state
+devices_table = Table(
+    'devices', _metadata,
+    Column('id', Integer, primary_key=True, autoincrement=True),
+    Column('device_id', String(64), unique=True, nullable=False),
+    Column('mac', String(64), unique=True, nullable=False),
+    Column('name', String(255), nullable=True),
+    Column('owner_username', String(255), nullable=True),
+    Column('status', String(32), nullable=False, default='provisioning'),
+    Column('last_seen', Integer, nullable=True),
+    Column('device_secret_hash', String(255), nullable=True),
+    Column('pairing_code', String(32), nullable=True),
+    Column('pairing_user', String(255), nullable=True),
+    Column('pairing_expires', Integer, nullable=True),
+)
+
+def _gen_device_id() -> str:
+    import secrets, string
+    base = ''.join(secrets.choice(string.ascii_lowercase + string.digits) for _ in range(10))
+    return f"dev-{base}"
+
+def _gen_pairing_code() -> str:
+    import secrets
+    return f"{secrets.randbelow(900000)+100000}"
 
 def _db_connect():
     return _db_engine.connect()
@@ -382,6 +421,144 @@ def admin_change_password():
         conn.execute(text('UPDATE users SET password_hash=:ph WHERE username=:username'), {'ph': generate_password_hash(new_password), 'username': username})
     return jsonify({'ok': True})
 
+# Device APIs
+
+def _require_auth_user() -> str | None:
+    return session.get('user_id')
+
+def _require_device_auth(device_id: str, secret: str) -> bool:
+    try:
+        with _db_engine.connect() as conn:
+            row = conn.execute(text('SELECT device_secret_hash FROM devices WHERE device_id=:d'), {'d': device_id}).fetchone()
+            if not row or not row[0]:
+                return False
+            return check_password_hash(row[0], secret)
+    except Exception:
+        return False
+
+@app.route('/api/devices/register', methods=['POST'])
+def device_register():
+    data = request.get_json(silent=True) or {}
+    mac = (data.get('mac') or '').strip().lower()
+    name = (data.get('name') or '').strip()
+    if not mac:
+        return jsonify({'error': 'mac_required'}), 400
+    device_id = _gen_device_id()
+    import secrets
+    device_secret = secrets.token_hex(16)
+    try:
+        with _db_engine.begin() as conn:
+            existed = conn.execute(text('SELECT device_id FROM devices WHERE mac=:m'), {'m': mac}).fetchone()
+            if existed:
+                conn.execute(text('UPDATE devices SET device_secret_hash=:h, status=:st, last_seen=NULL WHERE mac=:m'),
+                             {'h': generate_password_hash(device_secret), 'st': 'provisioning', 'm': mac})
+                device_id = existed[0]
+            else:
+                conn.execute(text('INSERT INTO devices (device_id, mac, name, status, device_secret_hash) VALUES (:d,:m,:n,:st,:h)'),
+                             {'d': device_id, 'm': mac, 'n': name or None, 'st': 'provisioning', 'h': generate_password_hash(device_secret)})
+    except Exception:
+        return jsonify({'error': 'db_error'}), 500
+    return jsonify({'ok': True, 'device_id': device_id, 'device_token': device_secret})
+
+@app.route('/api/devices/<device_id>/pair', methods=['POST'])
+def device_pair(device_id: str):
+    user = _require_auth_user()
+    if not user:
+        return jsonify({'error': 'unauthenticated'}), 401
+    data = request.get_json(silent=True) or {}
+    code = (data.get('pairing_code') or '').strip() or _gen_pairing_code()
+    ttl_sec = int(data.get('ttl_sec') or 300)
+    expires = int(time.time()) + max(60, min(ttl_sec, 900))
+    with _db_engine.begin() as conn:
+        cur = conn.execute(text('SELECT id FROM devices WHERE device_id=:d'), {'d': device_id}).fetchone()
+        if not cur:
+            return jsonify({'error': 'not_found'}), 404
+        conn.execute(text('UPDATE devices SET pairing_code=:pc, pairing_user=:pu, pairing_expires=:pe WHERE device_id=:d'),
+                     {'pc': code, 'pu': user, 'pe': expires, 'd': device_id})
+    return jsonify({'ok': True, 'pairing_code': code, 'expires': expires})
+
+@app.route('/api/devices/pair_by_mac', methods=['POST'])
+def device_pair_by_mac():
+    user = _require_auth_user()
+    if not user:
+        return jsonify({'error': 'unauthenticated'}), 401
+    data = request.get_json(silent=True) or {}
+    mac = (data.get('mac') or '').strip().lower()
+    if not mac:
+        return jsonify({'error': 'mac_required'}), 400
+    code = (data.get('pairing_code') or '').strip() or _gen_pairing_code()
+    ttl_sec = int(data.get('ttl_sec') or 300)
+    expires = int(time.time()) + max(60, min(ttl_sec, 900))
+    with _db_engine.begin() as conn:
+        cur = conn.execute(text('SELECT device_id FROM devices WHERE mac=:m'), {'m': mac}).fetchone()
+        if not cur:
+            return jsonify({'error': 'not_found'}), 404
+        conn.execute(text('UPDATE devices SET pairing_code=:pc, pairing_user=:pu, pairing_expires=:pe WHERE mac=:m'),
+                     {'pc': code, 'pu': user, 'pe': expires, 'm': mac})
+    return jsonify({'ok': True, 'pairing_code': code, 'expires': expires})
+
+@app.route('/api/devices/<device_id>/claim', methods=['POST'])
+def device_claim(device_id: str):
+    data = request.get_json(silent=True) or {}
+    device_token = (data.get('device_token') or '').strip()
+    pairing_code = (data.get('pairing_code') or '').strip()
+    if not device_token or not pairing_code:
+        return jsonify({'error': 'token_and_code_required'}), 400
+    now = int(time.time())
+    with _db_engine.begin() as conn:
+        row = conn.execute(text('SELECT pairing_code, pairing_user, pairing_expires FROM devices WHERE device_id=:d'), {'d': device_id}).fetchone()
+        if not row:
+            return jsonify({'error': 'not_found'}), 404
+        pc, pu, pe = row
+        if not pc or not pu or not pe or pe < now or pc != pairing_code:
+            return jsonify({'error': 'pairing_invalid'}), 400
+        tok = conn.execute(text('SELECT device_secret_hash FROM devices WHERE device_id=:d'), {'d': device_id}).fetchone()
+        if not tok or not tok[0] or not check_password_hash(tok[0], device_token):
+            return jsonify({'error': 'invalid_token'}), 401
+        conn.execute(text('UPDATE devices SET owner_username=:u, status=:st, pairing_code=NULL, pairing_user=NULL, pairing_expires=NULL WHERE device_id=:d'),
+                     {'u': pu, 'st': 'online', 'd': device_id})
+    return jsonify({'ok': True})
+
+@app.route('/api/devices/<device_id>/heartbeat', methods=['POST'])
+def device_heartbeat(device_id: str):
+    data = request.get_json(silent=True) or {}
+    device_token = (data.get('device_token') or '').strip()
+    if not device_token:
+        return jsonify({'error': 'token_required'}), 400
+    if not _require_device_auth(device_id, device_token):
+        return jsonify({'error': 'invalid_token'}), 401
+    with _db_engine.begin() as conn:
+        conn.execute(text('UPDATE devices SET last_seen=:ts, status=:st WHERE device_id=:d'), {'ts': int(time.time()), 'st': 'online', 'd': device_id})
+    return jsonify({'ok': True})
+
+@app.route('/api/devices', methods=['GET'])
+def list_my_devices():
+    user = _require_auth_user()
+    if not user:
+        return jsonify({'error': 'unauthenticated'}), 401
+    with _db_engine.connect() as conn:
+        rows = conn.execute(text('SELECT device_id, mac, name, status, last_seen FROM devices WHERE owner_username=:u ORDER BY name, mac'), {'u': user}).fetchall()
+    devices = [{'device_id': r[0], 'mac': r[1], 'name': r[2], 'status': r[3], 'last_seen': r[4]} for r in rows]
+    return jsonify({'devices': devices})
+
+@app.route('/api/devices/<device_id>/rename', methods=['POST'])
+def rename_device(device_id: str):
+    user = _require_auth_user()
+    if not user:
+        return jsonify({'error': 'unauthenticated'}), 401
+    data = request.get_json(silent=True) or {}
+    new_name = (data.get('name') or '').strip()
+    if not new_name:
+        return jsonify({'error': 'name_required'}), 400
+    with _db_engine.begin() as conn:
+        cur = conn.execute(text('SELECT owner_username FROM devices WHERE device_id=:d'), {'d': device_id}).fetchone()
+        if not cur:
+            return jsonify({'error': 'not_found'}), 404
+        if cur[0] != user:
+            return jsonify({'error': 'forbidden'}), 403
+        conn.execute(text('UPDATE devices SET name=:n WHERE device_id=:d'), {'n': new_name, 'd': device_id})
+    return jsonify({'ok': True})
+
 # Media playlist/status
 @app.route('/playlist')
 def get_playlist():
@@ -414,6 +591,40 @@ def get_playlist():
 @app.route('/api/playlist')
 def get_playlist_api():
     return get_playlist()
+
+@app.route('/api/public/playlist_by_mac')
+def public_playlist_by_mac():
+    mac = (request.args.get('mac') or '').strip().lower()
+    if not mac:
+        return jsonify({'playlist': []})
+    owner = None
+    try:
+        with _db_engine.connect() as conn:
+            row = conn.execute(text('SELECT owner_username FROM devices WHERE mac=:m'), {'m': mac}).fetchone()
+            if row and row[0]:
+                owner = row[0]
+    except Exception:
+        owner = None
+    if not owner:
+        return jsonify({'playlist': []})
+    # Build from static/media/<owner>/<mac>
+    media_dir = os.path.join(STATIC_DIR, 'media', owner, os.path.basename(mac))
+    image_exts = ('.png', '.jpg', '.jpeg', '.gif', '.webp')
+    video_exts = ('.mp4', '.mov', '.m4v', '.avi', '.webm')
+    items = []
+    try:
+        if os.path.isdir(media_dir):
+            for fname in sorted(os.listdir(media_dir)):
+                if fname.lower().endswith(video_exts):
+                    path = os.path.join(media_dir, fname)
+                    items.append({'type': 'video', 'src': f"/{os.path.relpath(path, PROJECT_ROOT)}"})
+            for fname in sorted(os.listdir(media_dir)):
+                if fname.lower().endswith(image_exts):
+                    path = os.path.join(media_dir, fname)
+                    items.append({'type': 'image', 'src': f"/{os.path.relpath(path, PROJECT_ROOT)}", 'duration_ms': 6000})
+    except Exception as e:
+        return jsonify({'playlist': [], 'error': str(e)}), 200
+    return jsonify({'playlist': items})
 
 @app.route('/status')
 def status():

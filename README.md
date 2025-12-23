@@ -16,8 +16,11 @@ source sssnlvenv/bin/activate
 pip install --upgrade pip
 pip install -r requirements.txt
 
-# Run backend
-python app.py
+# Run backend (choose one):
+# - From repo root:
+python -m backend.app
+# - Or from inside the backend folder:
+#   cd backend && python -m app
 ```
 
 Open:
@@ -43,7 +46,7 @@ export SSSNL_MEDIA_API_KEY='a_long_random_secret'
 
 ## Optional: Build Flutter Web
 
-If `flutter` is installed, build once and serve from `app.py`:
+If `flutter` is installed, build once and serve via `backend.app`:
 ```bash
 cd ./sssnl_app
 flutter build web --release --base-href /dashboard/ --output build/web_dashboard
@@ -63,7 +66,7 @@ chmod +x raspi_setup_and_run.sh
 This installs apt deps, sets up venv, builds Flutter Web (if available), and starts the backend. It does not open a browser.
 
 GPIO/DHT notes:
-- PIR on BCM 17, DHT11/22 on BCM 4 (change in `app.py`).
+- PIR on BCM 17, DHT11/22 on BCM 4 (change in `backend/app.py`).
 - Ensure `libgpiod2` is installed and your user is in `gpio,i2c` groups.
 
 ## Services & Background Run
@@ -75,4 +78,4 @@ For kiosk + boot startup (systemd), see README_SERVICES.md.
 - Web routes 500 for `/dashboard` or `/media`: build the Flutter Web bundles first.
 - No motion/DHT: check wiring, groups, and `libgpiod2`. You can simulate via `/mock-*` endpoints.
 - Chromium kiosk blank: ensure `DISPLAY=:0` and `.Xauthority` path for your user.
-- Port conflicts: edit the port in `app.py` or stop other processes.
+- Port conflicts: edit the port in `backend/app.py` or stop other processes.

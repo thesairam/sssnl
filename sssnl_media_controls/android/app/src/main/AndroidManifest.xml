@@ -1,4 +1,5 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
+    <uses-permission android:name="android.permission.INTERNET" />
     <!-- Bluetooth LE support -->
     <uses-feature android:name="android.hardware.bluetooth_le" android:required="false" />
     <!-- Android 12+ explicit Bluetooth permissions -->
@@ -9,7 +10,8 @@
     <application
         android:label="sssnl_media_controls"
         android:name="${applicationName}"
-        android:icon="@mipmap/ic_launcher">
+        android:icon="@mipmap/ic_launcher"
+        android:usesCleartextTraffic="true">
         <activity
             android:name=".MainActivity"
             android:exported="true"

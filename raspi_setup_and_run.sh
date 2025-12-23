@@ -97,9 +97,9 @@ cleanup() {
 }
 trap cleanup EXIT INT TERM
 
-log "Starting Flask backend..."
+log "Starting Flask backend (backend.app)..."
 source "$VENV_DIR/bin/activate"
-"$PYBIN" "$ROOT_DIR/app.py" &
+(cd "$ROOT_DIR" && "$PYBIN" -m backend.app) &
 PIDS+=("$!")
 deactivate || true
 

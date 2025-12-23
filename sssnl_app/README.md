@@ -1,16 +1,30 @@
-# sssnl_app
+# SSSNL App (Web Dashboard)
 
-A new Flutter project.
+Flutter Web app that displays media for a specific device. Intended for kiosk mode on Raspberry Pi or any browser.
 
-## Getting Started
+## Run (Development)
+```bash
+cd sssnl_app
+flutter pub get
+flutter run -d chrome --web-hostname=0.0.0.0 --web-port 5173 --dart-define=BACKEND_BASE_URL=http://<backend-host>:5656
+```
+- Access in browser: http://<this-machine-ip>:5173
+- Pass device context via URL: `?device_mac=<mac>` to scope the playlist.
 
-This project is a starting point for a Flutter application.
+Example:
+- http://localhost:5173/?device_mac=dc:a6:32:12:34:56
 
-A few resources to get you started if this is your first Flutter project:
+## Build (Production)
+```bash
+cd sssnl_app
+flutter build web --dart-define=BACKEND_BASE_URL=https://<backend-domain>
+```
+Serve `build/web` with any static server (Nginx, Caddy) or point the Raspberry Pi kiosk to the hosted URL including `device_mac`.
 
-- [Lab: Write your first Flutter app](https://docs.flutter.dev/get-started/codelab)
-- [Cookbook: Useful Flutter samples](https://docs.flutter.dev/cookbook)
+## Notes
+- The app polls the backend `/status` and `/playlist` endpoints and plays the playlist when motion is detected.
+- Use the mobile app to upload media to the selected device before testing playback.
 
-For help getting started with Flutter development, view the
-[online documentation](https://docs.flutter.dev/), which offers tutorials,
-samples, guidance on mobile development, and a full API reference.
+## Troubleshooting
+- CORS errors: ensure backend `CORS_ORIGINS` includes your dev origin (e.g., http://localhost:5173).
+- No media: confirm uploads for the selected device and that the query contains the correct `device_mac`.

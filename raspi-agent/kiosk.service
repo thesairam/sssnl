@@ -1,0 +1,17 @@
+[Unit]
+Description=SSSNL Chromium Kiosk
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+# Adjust user to your login user (often 'pi' on Raspberry Pi OS)
+User=pi
+Environment=DASHBOARD_URL=http://sssnl-desktop.local:5173
+WorkingDirectory=/opt/sssnl
+ExecStart=/usr/bin/bash /opt/sssnl/kiosk.sh
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=graphical.target

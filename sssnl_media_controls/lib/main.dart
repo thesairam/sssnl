@@ -38,8 +38,298 @@ class MediaControlsApp extends StatelessWidget {
           secondary: Color(0xFFF97316),
         ),
       ),
-      // Split correctly: /dev -> controls-only (with login); /media -> media-only
-      home: isDev ? const _LoginScreen() : const _MediaManagerPage(),
+      // Main app: auth gate leads to home menu; dev route keeps existing login
+      home: isDev ? const _LoginScreen() : const _AuthGate(),
+    );
+  }
+}
+
+/// Simple cookie store and client to persist Flask session across requests.
+class _CookieStore {
+  static const _cookieKey = 'session_cookie';
+  static String? _cookie; // in-memory cache: 'session=...'
+
+  static Future<String?> get() async {
+    if (_cookie != null) return _cookie;
+    final prefs = await SharedPreferences.getInstance();
+    _cookie = prefs.getString(_cookieKey);
+    return _cookie;
+  }
+
+  static Future<void> set(String? cookie) async {
+    _cookie = cookie;
+    final prefs = await SharedPreferences.getInstance();
+    if (cookie == null || cookie.isEmpty) {
+      await prefs.remove(_cookieKey);
+    } else {
+      await prefs.setString(_cookieKey, cookie);
+    }
+  }
+
+  static Map<String, String>? peekHeader() {
+    if (_cookie == null || _cookie!.isEmpty) return null;
+    return {'Cookie': _cookie!};
+  }
+}
+
+class _CookieClient extends http.BaseClient {
+  final http.Client _inner = http.Client();
+
+  @override
+  Future<http.StreamedResponse> send(http.BaseRequest request) async {
+    // Attach cookie if present
+    final cookie = await _CookieStore.get();
+    if (cookie != null && cookie.isNotEmpty) {
+      request.headers.putIfAbsent('Cookie', () => cookie);
+    }
+
+    final resp = await _inner.send(request);
+
+    // Capture Set-Cookie (Flask session)
+    try {
+      final setCookie = resp.headers['set-cookie'];
+      if (setCookie != null && setCookie.isNotEmpty) {
+        // Extract 'session=...;' robustly
+        final match = RegExp(r'(?:^|,)[^s]*session=([^;]+)')
+            .firstMatch(setCookie);
+        if (match != null) {
+          final value = match.group(1);
+          if (value != null && value.isNotEmpty) {
+            await _CookieStore.set('session=$value');
+          }
+        }
+      }
+    } catch (_) {
+      // ignore parsing errors
+    }
+
+    return resp;
+  }
+}
+
+final http.Client _api = _CookieClient();
+
+class _AuthGate extends StatefulWidget {
+  const _AuthGate();
+
+  @override
+  State<_AuthGate> createState() => _AuthGateState();
+}
+
+class _AuthGateState extends State<_AuthGate> {
+  bool _authed = false;
+  bool _loading = true;
+  String? _error;
+  final _userCtrl = TextEditingController();
+  final _passCtrl = TextEditingController();
+
+  @override
+  void initState() {
+    super.initState();
+    _checkAuth();
+  }
+
+  Future<void> _checkAuth() async {
+    setState(() { _loading = true; _error = null; });
+    try {
+      final resp = await _api.get(Uri.parse('$kBackendBaseUrl/api/auth/me')).timeout(const Duration(seconds: 8));
+      setState(() { _authed = resp.statusCode == 200; });
+    } catch (_) {
+      setState(() { _authed = false; });
+    } finally {
+      setState(() { _loading = false; });
+    }
+  }
+
+  Future<void> _login() async {
+    setState(() { _loading = true; _error = null; });
+    try {
+      final resp = await _api.post(
+        Uri.parse('$kBackendBaseUrl/api/auth/login'),
+        headers: {'Content-Type': 'application/json'},
+        body: json.encode({'username': _userCtrl.text.trim(), 'password': _passCtrl.text}),
+      ).timeout(const Duration(seconds: 8));
+      if (resp.statusCode == 200) {
+        if (!mounted) return;
+        Navigator.of(context).pushReplacement(MaterialPageRoute(builder: (_) => const _HomeMenuPage()));
+      } else {
+        setState(() { _error = 'Login failed (${resp.statusCode})'; });
+      }
+    } catch (e) {
+      setState(() { _error = 'Login error: $e'; });
+    } finally {
+      setState(() { _loading = false; });
+    }
+  }
+
+  Future<void> _signup() async {
+    setState(() { _loading = true; _error = null; });
+    try {
+      final resp = await _api.post(
+        Uri.parse('$kBackendBaseUrl/api/auth/signup'),
+        headers: {'Content-Type': 'application/json'},
+        body: json.encode({'username': _userCtrl.text.trim(), 'password': _passCtrl.text}),
+      ).timeout(const Duration(seconds: 8));
+      if (resp.statusCode == 200) {
+        if (!mounted) return;
+        Navigator.of(context).pushReplacement(MaterialPageRoute(builder: (_) => const _HomeMenuPage()));
+      } else {
+        setState(() { _error = 'Signup failed (${resp.statusCode})'; });
+      }
+    } catch (e) {
+      setState(() { _error = 'Signup error: $e'; });
+    } finally {
+      setState(() { _loading = false; });
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    if (_authed) return const _HomeMenuPage();
+    return Scaffold(
+      body: Center(
+        child: ConstrainedBox(
+          constraints: const BoxConstraints(maxWidth: 360),
+          child: Card(
+            color: const Color(0xFF020617),
+            elevation: 8,
+            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+            child: Padding(
+              padding: const EdgeInsets.all(20),
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  const Text('Sign In / Sign Up', textAlign: TextAlign.center, style: TextStyle(fontSize: 20, fontWeight: FontWeight.w600)),
+                  const SizedBox(height: 12),
+                  TextField(controller: _userCtrl, decoration: const InputDecoration(labelText: 'Username')),
+                  const SizedBox(height: 8),
+                  TextField(controller: _passCtrl, decoration: const InputDecoration(labelText: 'Password'), obscureText: true),
+                  const SizedBox(height: 12),
+                  Row(children: [
+                    ElevatedButton(onPressed: _loading ? null : _login, child: const Text('Sign In')),
+                    const SizedBox(width: 8),
+                    OutlinedButton(onPressed: _loading ? null : _signup, child: const Text('Sign Up')),
+                    if (_loading) ...[
+                      const SizedBox(width: 12),
+                      const SizedBox(width: 16, height: 16, child: CircularProgressIndicator(strokeWidth: 2)),
+                    ],
+                  ]),
+                  if (_error != null) ...[
+                    const SizedBox(height: 8),
+                    Text(_error!, style: const TextStyle(color: Colors.redAccent, fontSize: 12)),
+                  ]
+                ],
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _HomeMenuPage extends StatelessWidget {
+  const _HomeMenuPage();
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      appBar: AppBar(title: const Text('SSSNL')),
+      body: Padding(
+        padding: const EdgeInsets.all(16),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            const Text('Choose an action', style: TextStyle(fontSize: 18, fontWeight: FontWeight.w600)),
+            const SizedBox(height: 12),
+            ElevatedButton.icon(
+              onPressed: () => Navigator.of(context).push(MaterialPageRoute(builder: (_) => const _DeviceListPage())),
+              icon: const Icon(Icons.devices),
+              label: const Text('Choose Device'),
+            ),
+            const SizedBox(height: 8),
+            ElevatedButton.icon(
+              onPressed: () => Navigator.of(context).push(MaterialPageRoute(builder: (_) => const DevicePairingPage())),
+              icon: const Icon(Icons.bluetooth),
+              label: const Text('Add Device (Setup)'),
+            ),
+            const SizedBox(height: 8),
+            OutlinedButton.icon(
+              onPressed: () => Navigator.of(context).push(MaterialPageRoute(builder: (_) => const _MediaManagerPage())),
+              icon: const Icon(Icons.perm_media),
+              label: const Text('Open Media Controls'),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _DeviceListPage extends StatefulWidget {
+  const _DeviceListPage();
+
+  @override
+  State<_DeviceListPage> createState() => _DeviceListPageState();
+}
+
+class _DeviceListPageState extends State<_DeviceListPage> {
+  List<Map<String, dynamic>> _devices = const [];
+  bool _loading = true;
+  String? _error;
+
+  @override
+  void initState() {
+    super.initState();
+    _load();
+  }
+
+  Future<void> _load() async {
+    setState(() { _loading = true; _error = null; });
+    try {
+      final resp = await _api.get(Uri.parse('$kBackendBaseUrl/api/devices')).timeout(const Duration(seconds: 10));
+      if (resp.statusCode == 200) {
+        final data = json.decode(resp.body) as Map<String, dynamic>;
+        setState(() { _devices = (data['devices'] as List).cast<Map<String, dynamic>>(); });
+      } else {
+        setState(() { _error = 'List failed (${resp.statusCode})'; });
+      }
+    } catch (e) {
+      setState(() { _error = 'Load error: $e'; });
+    } finally {
+      setState(() { _loading = false; });
+    }
+  }
+
+  Future<void> _select(Map<String, dynamic> d) async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setString('device_mac', (d['mac'] as String?) ?? '');
+    await prefs.setString('device_id', (d['device_id'] as String?) ?? '');
+    if (!mounted) return;
+    Navigator.of(context).pushReplacement(MaterialPageRoute(builder: (_) => const _MediaManagerPage()));
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      appBar: AppBar(title: const Text('Choose Device')),
+      body: _loading
+          ? const Center(child: CircularProgressIndicator())
+          : _devices.isEmpty
+              ? Center(child: Text(_error ?? 'No devices found'))
+              : ListView.builder(
+                  itemCount: _devices.length,
+                  itemBuilder: (ctx, i) {
+                    final d = _devices[i];
+                    return ListTile(
+                      leading: const Icon(Icons.device_hub),
+                      title: Text(d['name'] as String? ?? d['mac'] as String? ?? ''),
+                      subtitle: Text('MAC: ${d['mac'] ?? ''}  •  status: ${d['status'] ?? 'unknown'}'),
+                      trailing: ElevatedButton(onPressed: () => _select(d), child: const Text('Select')),
+                    );
+                  },
+                ),
     );
   }
 }
@@ -59,7 +349,7 @@ class _LoginScreenState extends State<_LoginScreen> {
 
   void _submit() {
     setState(() { _error = null; _loading = true; });
-    http
+    _api
         .post(
           Uri.parse('$kBackendBaseUrl/api/auth/login'),
           headers: {'Content-Type': 'application/json'},
@@ -186,7 +476,7 @@ class _MediaManagerPageState extends State<_MediaManagerPage> {
   Future<void> _checkAuth() async {
     setState(() { _authLoading = true; _authError = null; });
     try {
-      final resp = await http.get(Uri.parse('$kBackendBaseUrl/api/auth/me')).timeout(const Duration(seconds: 10));
+      final resp = await _api.get(Uri.parse('$kBackendBaseUrl/api/auth/me')).timeout(const Duration(seconds: 10));
       setState(() { _authed = resp.statusCode == 200; });
     } catch (_) {
       setState(() { _authed = false; });
@@ -198,7 +488,7 @@ class _MediaManagerPageState extends State<_MediaManagerPage> {
   Future<void> _login() async {
     setState(() { _authLoading = true; _authError = null; });
     try {
-      final resp = await http.post(
+      final resp = await _api.post(
         Uri.parse('$kBackendBaseUrl/api/auth/login'),
         headers: {'Content-Type': 'application/json'},
         body: json.encode({'username': _userCtrl.text.trim(), 'password': _passCtrl.text}),
@@ -219,7 +509,7 @@ class _MediaManagerPageState extends State<_MediaManagerPage> {
   Future<void> _signup() async {
     setState(() { _authLoading = true; _authError = null; });
     try {
-      final resp = await http.post(
+      final resp = await _api.post(
         Uri.parse('$kBackendBaseUrl/api/auth/signup'),
         headers: {'Content-Type': 'application/json'},
         body: json.encode({'username': _userCtrl.text.trim(), 'password': _passCtrl.text}),
@@ -246,7 +536,7 @@ class _MediaManagerPageState extends State<_MediaManagerPage> {
           if (_deviceMac != null && _deviceMac!.isNotEmpty) 'device_mac': _deviceMac!,
         });
         final resp =
-          await http.get(uri).timeout(
+          await _api.get(uri).timeout(
         const Duration(seconds: 10),
       );
       if (resp.statusCode == 200) {
@@ -294,6 +584,10 @@ class _MediaManagerPageState extends State<_MediaManagerPage> {
       }
 
       try {
+        final cookie = await _CookieStore.get();
+        if (cookie != null && cookie.isNotEmpty) {
+          request.headers['Cookie'] = cookie;
+        }
         await request.send().timeout(const Duration(seconds: 30));
       } catch (_) {
         // ignore individual failures, continue others
@@ -326,7 +620,7 @@ class _MediaManagerPageState extends State<_MediaManagerPage> {
     try {
         final prefs = await SharedPreferences.getInstance();
         final mac = prefs.getString('device_mac');
-        final resp = await http
+        final resp = await _api
           .post(Uri.parse('$kBackendBaseUrl/api/media/delete'),
               headers: {'Content-Type': 'application/json'},
               body: json.encode({'filename': file.name, if (mac != null && mac.isNotEmpty) 'device_mac': mac}))
@@ -341,8 +635,9 @@ class _MediaManagerPageState extends State<_MediaManagerPage> {
 
   Future<void> _logout() async {
     try {
-      final resp = await http.post(Uri.parse('$kBackendBaseUrl/api/auth/logout')).timeout(const Duration(seconds: 10));
+      final resp = await _api.post(Uri.parse('$kBackendBaseUrl/api/auth/logout')).timeout(const Duration(seconds: 10));
       if (resp.statusCode == 200) {
+        await _CookieStore.set(null);
         setState(() {
           _authed = false;
           _files = const [];
@@ -467,6 +762,7 @@ class _MediaManagerPageState extends State<_MediaManagerPage> {
                                   ? Image.network(
                                       '$kBackendBaseUrl${f.url}',
                                       fit: BoxFit.cover,
+                                      headers: _CookieStore.peekHeader(),
                                       errorBuilder: (_, __, ___) => const Icon(
                                         Icons.broken_image,
                                         color: Colors.white54,
@@ -536,7 +832,7 @@ class _DevControlsPageState extends State<_DevControlsPage> {
       _lastMessage = null;
     });
     try {
-      final resp = await http
+      final resp = await _api
           .post(
             Uri.parse('$kBackendBaseUrl$path'),
             headers: {'Content-Type': 'application/json'},
@@ -557,7 +853,7 @@ class _DevControlsPageState extends State<_DevControlsPage> {
 
   Future<void> _refreshUsers() async {
     try {
-      final resp = await http.get(Uri.parse('$kBackendBaseUrl/api/admin/users')).timeout(const Duration(seconds: 10));
+      final resp = await _api.get(Uri.parse('$kBackendBaseUrl/api/admin/users')).timeout(const Duration(seconds: 10));
       if (resp.statusCode == 200) {
         final data = json.decode(resp.body) as Map<String, dynamic>;
         setState(() { _users = (data['users'] as List).cast<Map<String, dynamic>>(); });
@@ -567,7 +863,7 @@ class _DevControlsPageState extends State<_DevControlsPage> {
 
   Future<void> _addUser() async {
     try {
-      final resp = await http.post(
+      final resp = await _api.post(
         Uri.parse('$kBackendBaseUrl/api/admin/users'),
         headers: {'Content-Type': 'application/json'},
         body: json.encode({'username': _newUserCtrl.text.trim(), 'password': _newPassCtrl.text, 'role': _newRole}),
@@ -582,7 +878,7 @@ class _DevControlsPageState extends State<_DevControlsPage> {
 
   Future<void> _deleteUser(String username) async {
     try {
-      final resp = await http.delete(Uri.parse('$kBackendBaseUrl/api/admin/users/$username')).timeout(const Duration(seconds: 10));
+      final resp = await _api.delete(Uri.parse('$kBackendBaseUrl/api/admin/users/$username')).timeout(const Duration(seconds: 10));
       if (resp.statusCode == 200) {
         await _refreshUsers();
       }
@@ -718,7 +1014,7 @@ class _DevControlsPageState extends State<_DevControlsPage> {
               ElevatedButton(
                 onPressed: () async {
                   try {
-                    final resp = await http.post(
+                    final resp = await _api.post(
                       Uri.parse('$kBackendBaseUrl/api/admin/change_password'),
                       headers: {'Content-Type': 'application/json'},
                       body: json.encode({'username': 'dev', 'password': _devNewPassCtrl.text}),
