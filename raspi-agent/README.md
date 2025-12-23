@@ -15,22 +15,40 @@ Components
 - service files: systemd unit templates.
 
 Quick start
-1. Install dependencies (BlueZ, Python packages):
+1. Install system packages (use these to avoid wheel build errors):
 ```bash
 sudo apt update
-sudo apt install -y python3-pip python3-dbus python3-gi bluetooth bluez bluez-tools rfkill chromium-browser
-python3 -m pip install -r requirements.txt
+sudo apt install -y \
+  bluetooth bluez bluez-tools rfkill \
+  python3-pip python3-venv python3-dev \
+  python3-gi python3-dbus \
+  libglib2.0-dev libdbus-1-dev libbluetooth-dev \
+  chromium || sudo apt install -y chromium-browser
 ```
-2. Set backend URL:
+
+2. Create a fresh virtualenv, upgrade pip, and use piwheels for ARM wheels:
+```bash
+python3 -m venv .venv
+source .venv/bin/activate
+python3 -m pip install -U pip setuptools wheel
+pip config set global.extra-index-url https://www.piwheels.org/simple
+pip install --prefer-binary -r requirements.txt
+```
+3. Set backend URL:
 ```bash
 export BACKEND_BASE_URL="http://<your_backend_host>:5656"
 ```
-3. Run BLE provisioning service:
+4. Run BLE provisioning service:
 ```bash
-sudo -E python3 ble_peripheral.py
+sudo -E env PATH="$PATH" PYTHONPATH="$PYTHONPATH" $(which python3) ble_peripheral.py
 ```
-4. Use the mobile app to pair and send Wi‑Fi credentials.
-5. The agent will register with backend and send heartbeat periodically.
+5. Use the mobile app to pair and send Wi‑Fi credentials.
+6. The agent will register with backend and send heartbeat periodically.
+
+Why these steps?
+- PyGObject/`gi` is installed via apt (`python3-gi`). Do not `pip install PyGObject` on Raspberry Pi — it often fails to build wheels.
+- `--prefer-binary` and the piwheels index ensure ARM wheels are used whenever available.
+- `python3-dbus` supplies DBus bindings used by BlueZ and avoids fragile pip builds.
 
 Kiosk mode (Chromium fullscreen)
 1) Choose a hostname for your desktop serving the web dashboard (so you don’t need an IP). Options:
@@ -79,3 +97,8 @@ Security notes
 Tips
 - To run the dashboard from your desktop without IPs, prefer a .local mDNS name (e.g., `http://sssnl-desktop.local:5173`). The kiosk script defaults to that and appends `?device_mac=<mac>`.
 - You can override the dashboard URL by setting `DASHBOARD_URL` in the systemd unit Environment.
+
+Troubleshooting
+- ImportError: gi.repository not found → `sudo apt install -y python3-gi`
+- No Bluetooth adapter found → enable Bluetooth: `sudo rfkill unblock all` and ensure BlueZ is running: `sudo systemctl status bluetooth`
+- `bluetoothctl` permission issues → run the agent with `sudo -E` or add your user to the `bluetooth` group and restart.

@@ -1,4 +1,5 @@
-bleak==0.22.3
 requests==2.32.3
 pydbus==0.6.0
-PyGObject==3.46.0
+# Note: PyGObject is provided by the OS (python3-gi). Do NOT pip install it.
+# If you need BLE central features later, bleak has ARM wheels on piwheels:
+# bleak==0.22.3

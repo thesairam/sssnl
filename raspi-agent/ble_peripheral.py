@@ -5,8 +5,14 @@ import time
 import threading
 from typing import Optional
 
-from pydbus import SystemBus
-from gi.repository import GLib
+try:
+    from pydbus import SystemBus
+    from gi.repository import GLib
+except Exception as import_err:
+    print("Missing system packages for BLE provisioning. On Raspberry Pi run:")
+    print("  sudo apt update && sudo apt install -y python3-gi python3-dbus bluetooth bluez bluez-tools rfkill")
+    print("If you still see issues, also install: libglib2.0-dev libdbus-1-dev libbluetooth-dev")
+    raise
 
 from backend_client import ensure_registered
 
