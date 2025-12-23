@@ -11,6 +11,10 @@ try:
 except Exception as import_err:
     print("Missing system packages for BLE provisioning. On Raspberry Pi run:")
     print("  sudo apt update && sudo apt install -y python3-gi python3-dbus bluetooth bluez bluez-tools rfkill")
+    print("If using a virtualenv, recreate it with system packages so gi/dbus are visible:")
+    print("  rm -rf .venv && python3 -m venv --system-site-packages .venv && source .venv/bin/activate")
+    print("Run with the venv interpreter explicitly (as root):")
+    print("  sudo -E $(pwd)/.venv/bin/python ble_peripheral.py")
     print("If you still see issues, also install: libglib2.0-dev libdbus-1-dev libbluetooth-dev")
     raise
 
@@ -149,6 +153,9 @@ class MacCharacteristic(Characteristic):
 
 
 def write_wifi(ssid: str, password: str):
+    if os.environ.get('SSSNL_DESKTOP_MODE') == '1' or os.environ.get('SSSNL_SKIP_WIFI') == '1':
+        print('Desktop mode: skipping Wi-Fi reconfiguration')
+        return
     # Very simplified approach using wpa_supplicant
     wpa_path = '/etc/wpa_supplicant/wpa_supplicant.conf'
     content = f'country=US\nctrl_interface=DIR=/var/run/wpa_supplicant GROUP=netdev\nupdate_config=1\n\nnetwork={{\n    ssid="{ssid}"\n    psk="{password}"\n}}\n'
@@ -162,11 +169,34 @@ def write_wifi(ssid: str, password: str):
 
 
 def get_mac() -> str:
+    env_mac = os.environ.get('SSSNL_DEVICE_MAC')
+    if env_mac:
+        return env_mac
+    # Prefer wlan0, else pick first non-loopback interface
+    candidates = []
     try:
         with open('/sys/class/net/wlan0/address', 'r') as f:
-            return f.read().strip()
+            mac = f.read().strip()
+            if mac:
+                return mac
     except Exception:
-        return '00:00:00:00:00:00'
+        pass
+    try:
+        for name in os.listdir('/sys/class/net'):
+            if name in ('lo',):
+                continue
+            try:
+                with open(f'/sys/class/net/{name}/address', 'r') as f:
+                    mac = f.read().strip()
+                    if mac and mac != '00:00:00:00:00:00':
+                        candidates.append(mac)
+            except Exception:
+                continue
+        if candidates:
+            return candidates[0]
+    except Exception:
+        pass
+    return '00:00:00:00:00:00'
 
 
 def register_gatt(app):
@@ -177,16 +207,29 @@ def register_gatt(app):
 
 
 def advertise():
-    # Advertising via bluetoothctl quick method
+    # Advertising via bluetoothctl quick method; ensure LE advertising is enabled and connectable
     os.system('bluetoothctl --timeout 1 power on')
     os.system('bluetoothctl --timeout 1 agent NoInputNoOutput')
     os.system('bluetoothctl --timeout 1 default-agent')
     os.system('bluetoothctl --timeout 1 set-alias SSSNL-Device')
-    os.system('bluetoothctl advertising on')
+    # Prefer LE only advertising; bluez on some platforms requires experimental for full GATT
+    os.system('bluetoothctl --timeout 1 advertise yes')
 
 
 def main():
     global MAIN_LOOP
+    if os.environ.get('SSSNL_SIMULATE') == '1':
+        print('Simulation mode: skipping BLE. Registering and starting heartbeat...')
+        device_id, device_token = ensure_registered(pairing_code=os.environ.get('SSSNL_PAIRING_CODE'))
+        if device_id:
+            t = threading.Thread(target=run_heartbeat_loop, daemon=True)
+            t.start()
+            print('Heartbeat started for', device_id)
+            while True:
+                time.sleep(60)
+        else:
+            print('Failed to register in simulation mode')
+            return
     bus = SystemBus()
     app = Application(bus)
     register_gatt(app)

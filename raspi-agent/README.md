@@ -26,9 +26,10 @@ sudo apt install -y \
   chromium || sudo apt install -y chromium-browser
 ```
 
-2. Create a fresh virtualenv, upgrade pip, and use piwheels for ARM wheels:
+2. Create a fresh virtualenv that can see system packages, upgrade pip, and use piwheels for ARM wheels:
 ```bash
-python3 -m venv .venv
+rm -rf .venv  # if you created one previously without system packages
+python3 -m venv --system-site-packages .venv
 source .venv/bin/activate
 python3 -m pip install -U pip setuptools wheel
 pip config set global.extra-index-url https://www.piwheels.org/simple
@@ -38,15 +39,16 @@ pip install --prefer-binary -r requirements.txt
 ```bash
 export BACKEND_BASE_URL="http://:192.168.29.38:5656"
 ```
-4. Run BLE provisioning service:
+4. Run BLE provisioning service (explicitly use the venv's Python so it has both your pip packages and system `gi`):
 ```bash
-sudo -E env PATH="$PATH" PYTHONPATH="$PYTHONPATH" $(which python3) ble_peripheral.py
+sudo -E env PATH="$PATH" PYTHONPATH="$PYTHONPATH" $(pwd)/.venv/bin/python ble_peripheral.py
 ```
 5. Use the mobile app to pair and send Wi‑Fi credentials.
 6. The agent will register with backend and send heartbeat periodically.
 
 Why these steps?
 - PyGObject/`gi` is installed via apt (`python3-gi`). Do not `pip install PyGObject` on Raspberry Pi — it often fails to build wheels.
+- The `--system-site-packages` venv flag makes `gi` and `dbus` from apt visible inside your venv, so imports work without building wheels.
 - `--prefer-binary` and the piwheels index ensure ARM wheels are used whenever available.
 - `python3-dbus` supplies DBus bindings used by BlueZ and avoids fragile pip builds.
 
@@ -99,6 +101,41 @@ Tips
 - You can override the dashboard URL by setting `DASHBOARD_URL` in the systemd unit Environment.
 
 Troubleshooting
-- ImportError: gi.repository not found → `sudo apt install -y python3-gi`
+- ImportError: gi.repository not found →
+  1) `sudo apt install -y python3-gi`
+  2) Recreate venv with system packages: `rm -rf .venv && python3 -m venv --system-site-packages .venv && source .venv/bin/activate`
+  3) Run with explicit venv Python: `sudo -E $(pwd)/.venv/bin/python ble_peripheral.py`
 - No Bluetooth adapter found → enable Bluetooth: `sudo rfkill unblock all` and ensure BlueZ is running: `sudo systemctl status bluetooth`
 - `bluetoothctl` permission issues → run the agent with `sudo -E` or add your user to the `bluetooth` group and restart.
+
+Backend client
+- After Wi‑Fi credentials are written over BLE, the agent auto-registers the device and starts a background heartbeat loop. No separate service is needed.
+
+Test on Ubuntu Desktop
+- Quick simulation (no BLE, no Wi‑Fi changes):
+```bash
+cd raspi-agent
+python3 -m venv --system-site-packages .venv
+source .venv/bin/activate
+pip install --prefer-binary -r requirements.txt
+export BACKEND_BASE_URL="http://<your_backend_host>:5656"
+export SSSNL_SIMULATE=1
+export SSSNL_DESKTOP_MODE=1
+# Optional: override MAC for testing
+export SSSNL_DEVICE_MAC=DE:AD:BE:EF:00:01
+# Use a user-writable state file when not running as root
+export SSSNL_STATE=$(pwd)/device_state.json
+$(pwd)/.venv/bin/python ble_peripheral.py
+```
+
+- Full BLE test on Ubuntu (requires BLE adapter and BlueZ experimental):
+```bash
+sudo apt install -y bluetooth bluez bluez-tools python3-gi python3-dbus
+sudo systemctl stop bluetooth
+sudo /usr/lib/bluetooth/bluetoothd -E -d &  # start BlueZ with --experimental
+cd raspi-agent && source .venv/bin/activate || python3 -m venv --system-site-packages .venv && source .venv/bin/activate
+pip install --prefer-binary -r requirements.txt
+export BACKEND_BASE_URL="http://<your_backend_host>:5656"
+sudo -E $(pwd)/.venv/bin/python ble_peripheral.py
+```
+If advertising/GATT fails, confirm your adapter supports LE Peripheral and that BlueZ is running with `--experimental`.

@@ -9,12 +9,30 @@ STATE_FILE = os.environ.get('SSSNL_STATE', '/var/lib/sssnl/device_state.json')
 
 
 def get_mac_address() -> str:
+    env_mac = os.environ.get('SSSNL_DEVICE_MAC')
+    if env_mac:
+        return env_mac
     try:
-        import subprocess
-        out = subprocess.check_output(['cat', '/sys/class/net/wlan0/address']).decode().strip()
-        return out
+        with open('/sys/class/net/wlan0/address', 'r') as f:
+            mac = f.read().strip()
+            if mac:
+                return mac
     except Exception:
-        return '00:00:00:00:00:00'
+        pass
+    try:
+        for name in os.listdir('/sys/class/net'):
+            if name in ('lo',):
+                continue
+            try:
+                with open(f'/sys/class/net/{name}/address', 'r') as f:
+                    mac = f.read().strip()
+                    if mac and mac != '00:00:00:00:00:00':
+                        return mac
+            except Exception:
+                continue
+    except Exception:
+        pass
+    return '00:00:00:00:00:00'
 
 
 def register_device(mac: str, name: Optional[str] = None) -> Tuple[Optional[str], Optional[str]]:
