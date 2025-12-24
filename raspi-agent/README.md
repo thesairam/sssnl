@@ -43,7 +43,7 @@ sudo ./setup_pi.sh
 ```
 3. Set backend URL:
 ```bash
-export BACKEND_BASE_URL="http://:192.168.29.38:5656"
+export BACKEND_BASE_URL="http://192.168.29.38:5656"
 ```
 4. Run BLE provisioning service (explicitly use the venv's Python so it has both your pip packages and system `gi`):
 ```bash
@@ -150,3 +150,42 @@ export BACKEND_BASE_URL="http://<your_backend_host>:5656"
 sudo -E $(pwd)/.venv/bin/python ble_peripheral.py
 ```
 If advertising/GATT fails, confirm your adapter supports LE Peripheral and that BlueZ is running with `--experimental`.
+
+## Run BLE Agent as a systemd service (optional)
+
+Create `/etc/systemd/system/sssnl-agent.service` to run the BLE provisioning agent at boot:
+
+```ini
+[Unit]
+Description=SSSNL Raspberry Pi BLE Agent
+After=network-online.target bluetooth.service
+Wants=network-online.target bluetooth.service
+
+[Service]
+Type=simple
+# Adjust paths and user if needed
+User=pi
+WorkingDirectory=/home/pi/sssnl/raspi-agent
+Environment=BACKEND_BASE_URL=http://192.168.29.38:5656
+ExecStart=/home/pi/sssnl/raspi-agent/.venv/bin/python /home/pi/sssnl/raspi-agent/ble_peripheral.py
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target
+```
+
+Enable and start:
+
+```bash
+sudo systemctl daemon-reload
+sudo systemctl enable sssnl-agent.service
+sudo systemctl start sssnl-agent.service
+sudo systemctl status sssnl-agent.service
+```
+
+View logs:
+
+```bash
+journalctl -u sssnl-agent.service -f
+```

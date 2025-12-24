@@ -32,6 +32,27 @@ sudo docker compose ps
 ```
 Backend will listen on `http://localhost:5656`.
 
+## Independent App Launches
+
+These apps run separately and use `BACKEND_BASE_URL` to talk to the backend:
+
+- Dashboard (Flutter dev server):
+	```bash
+	cd ../sssnl_app
+	flutter pub get
+	flutter run -d chrome --web-hostname=0.0.0.0 --web-port 5173 --dart-define=BACKEND_BASE_URL=http://localhost:5656
+	```
+
+- Media Controls (Flutter mobile):
+	```bash
+	cd ../sssnl_media_controls
+	flutter pub get
+	flutter run -d android --dart-define=BACKEND_BASE_URL=http://localhost:5656
+	# or: flutter run -d ios --dart-define=BACKEND_BASE_URL=http://localhost:5656
+	```
+
+Ensure `CORS_ORIGINS` includes your dev origin (e.g., `http://localhost:5173`).
+
 ## Auth Defaults
 - Admin username: `dbadmin`
 - Admin password: `dbadmin`

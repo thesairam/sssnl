@@ -3,7 +3,7 @@ import os
 import json
 import time
 import threading
-from typing import Optional
+from typing import Optional, Any, Dict
 
 try:
     from pydbus import SystemBus
@@ -51,67 +51,188 @@ def get_adapter_path():
 
 
 class Application(object):
-    def __init__(self, bus):
+    """
+    Root object for the GATT application. BlueZ will introspect children under
+    this path to discover services and characteristics. We must register each
+    DBus object with pydbus including its introspection XML.
+    """
+    __dbus_xml__ = """
+        <node>
+            <interface name='org.freedesktop.DBus.ObjectManager'>
+                <method name='GetManagedObjects'>
+                    <arg type='a{oa{sa{sv}}}' name='objects' direction='out'/>
+                </method>
+            </interface>
+        </node>
+        """
+
+    def __init__(self, bus: SystemBus):
         self.bus = bus
         self.path = '/org/sssnl/app'
         self.services = []
-        self.add_service(ProvisioningService(bus, 0))
+        svc = ProvisioningService(self.bus, 0)
+        self.add_service(svc)
 
-    def get_path(self):
+        # Register service and characteristics on DBus
+        self.bus.register_object(svc.get_path(), svc, None)
+        for ch in svc.characteristics:
+                        self.bus.register_object(ch.get_path(), ch, None)
+
+    def get_path(self) -> str:
         return self.path
 
-    def add_service(self, service):
+    def add_service(self, service: 'ProvisioningService') -> None:
         self.services.append(service)
 
     def get_services(self):
         return self.services
 
+    # org.freedesktop.DBus.ObjectManager
+    def GetManagedObjects(self) -> Dict[str, Dict[str, Dict[str, Any]]]:  # noqa: N802
+        """Return hierarchy for BlueZ: paths -> {iface -> props}.
+        Includes services and characteristics registered under this app path.
+        """
+        result: Dict[str, Dict[str, Dict[str, Any]]] = {}
+        for svc in self.services:
+            result[svc.get_path()] = {
+                'org.bluez.GattService1': svc.GetAll('org.bluez.GattService1')
+            }
+            for ch in svc.characteristics:
+                result[ch.get_path()] = {
+                    'org.bluez.GattCharacteristic1': ch.GetAll('org.bluez.GattCharacteristic1')
+                }
+        return result
+
 
 class ProvisioningService(object):
-    def __init__(self, bus, index):
+    """
+    org.bluez.GattService1 implementation via pydbus.
+    Exposes the provisioning service and two characteristics under it.
+    """
+    __dbus_xml__ = """
+    <node>
+      <interface name='org.bluez.GattService1'>
+        <property name='UUID' type='s' access='read'/>
+        <property name='Primary' type='b' access='read'/>
+        <property name='Includes' type='ao' access='read'/>
+      </interface>
+      <interface name='org.freedesktop.DBus.Properties'>
+        <method name='Get'>
+          <arg type='s' name='interface' direction='in' />
+          <arg type='s' name='prop' direction='in' />
+          <arg type='v' name='value' direction='out' />
+        </method>
+        <method name='GetAll'>
+          <arg type='s' name='interface' direction='in'/>
+          <arg type='a{sv}' name='props' direction='out'/>
+        </method>
+        <method name='Set'>
+          <arg type='s' name='interface' direction='in'/>
+          <arg type='s' name='prop' direction='in'/>
+          <arg type='v' name='value' direction='in'/>
+        </method>
+      </interface>
+    </node>
+    """
+
+    def __init__(self, bus: SystemBus, index: int):
         self.path = f"/org/sssnl/service{index}"
         self.bus = bus
         self.uuid = SERVICE_UUID
         self.primary = True
-        self.characteristics = []
+        self.includes: list[str] = []
+        self.characteristics: list[Characteristic] = []
         self.add_characteristic(CredentialsCharacteristic(bus, 0, self))
         self.add_characteristic(MacCharacteristic(bus, 1, self))
 
-    def get_properties(self):
-        return {
-            'org.bluez.GattService1': {
+    # org.freedesktop.DBus.Properties
+    def Get(self, interface: str, prop: str) -> Any:  # noqa: N802
+        return self.GetAll(interface).get(prop)
+
+    def GetAll(self, interface: str) -> Dict[str, Any]:  # noqa: N802
+        if interface == 'org.bluez.GattService1':
+            return {
                 'UUID': self.uuid,
                 'Primary': self.primary,
-                'Characteristics': [c.get_path() for c in self.characteristics],
+                'Includes': self.includes,
             }
-        }
+        return {}
 
-    def get_path(self):
+    def Set(self, interface: str, prop: str, value: Any) -> None:  # noqa: N802
+        # No writable properties
+        pass
+
+    def get_path(self) -> str:
         return self.path
 
-    def add_characteristic(self, characteristic):
+    def add_characteristic(self, characteristic: 'Characteristic') -> None:
         self.characteristics.append(characteristic)
 
 
 class Characteristic(object):
-    def __init__(self, bus, index, uuid, flags, service):
-        self.path = service.get_path() + f"/char{index}"
-        self.bus = bus
-        self.uuid = uuid
-        self.service = service
-        self.flags = flags
+        """
+        Base for org.bluez.GattCharacteristic1. Subclasses implement ReadValue/WriteValue.
+        """
+        __dbus_xml__ = """
+        <node>
+            <interface name='org.bluez.GattCharacteristic1'>
+                <method name='ReadValue'>
+                    <arg type='a{sv}' name='options' direction='in'/>
+                    <arg type='ay' name='value' direction='out'/>
+                </method>
+                <method name='WriteValue'>
+                    <arg type='ay' name='value' direction='in'/>
+                    <arg type='a{sv}' name='options' direction='in'/>
+                </method>
+                <property name='Service' type='o' access='read'/>
+                <property name='UUID' type='s' access='read'/>
+                <property name='Flags' type='as' access='read'/>
+            </interface>
+            <interface name='org.freedesktop.DBus.Properties'>
+                <method name='Get'>
+                    <arg type='s' name='interface' direction='in' />
+                    <arg type='s' name='prop' direction='in' />
+                    <arg type='v' name='value' direction='out' />
+                </method>
+                <method name='GetAll'>
+                    <arg type='s' name='interface' direction='in'/>
+                    <arg type='a{sv}' name='props' direction='out'/>
+                </method>
+                <method name='Set'>
+                    <arg type='s' name='interface' direction='in'/>
+                    <arg type='s' name='prop' direction='in'/>
+                    <arg type='v' name='value' direction='in'/>
+                </method>
+            </interface>
+        </node>
+        """
 
-    def get_properties(self):
-        return {
-            'org.bluez.GattCharacteristic1': {
-                'Service': self.service.get_path(),
-                'UUID': self.uuid,
-                'Flags': self.flags,
-            }
-        }
+        def __init__(self, bus: SystemBus, index: int, uuid: str, flags: list[str], service: ProvisioningService):
+                self.path = service.get_path() + f"/char{index}"
+                self.bus = bus
+                self.uuid = uuid
+                self.service = service
+                self.flags = flags
 
-    def get_path(self):
-        return self.path
+        # org.freedesktop.DBus.Properties
+        def Get(self, interface: str, prop: str) -> Any:  # noqa: N802
+                return self.GetAll(interface).get(prop)
+
+        def GetAll(self, interface: str) -> Dict[str, Any]:  # noqa: N802
+                if interface == 'org.bluez.GattCharacteristic1':
+                        return {
+                                'Service': self.service.get_path(),
+                                'UUID': self.uuid,
+                                'Flags': self.flags,
+                        }
+                return {}
+
+        def Set(self, interface: str, prop: str, value: Any) -> None:  # noqa: N802
+                # No writable properties
+                pass
+
+        def get_path(self) -> str:
+                return self.path
 
 
 class CredentialsCharacteristic(Characteristic):
@@ -199,27 +320,32 @@ def get_mac() -> str:
     return '00:00:00:00:00:00'
 
 
-def register_gatt(app):
+def register_gatt(app: Application):
     bus = SystemBus()
     adapter_path = get_adapter_path()
-    service_manager = bus.get(BLUEZ_SERVICE_NAME, adapter_path)
-    service_manager.RegisterApplication(app.get_path(), {}, reply_handler=lambda *a: print('GATT app registered'), error_handler=lambda e: print('RegisterApplication error', e))
+    # Register the application path where our service/characteristic objects are exported
+    gatt_manager = bus.get(BLUEZ_SERVICE_NAME, adapter_path)
+    try:
+        gatt_manager.RegisterApplication(app.get_path(), {})
+        print('GATT application registered')
+    except Exception as e:
+        print('RegisterApplication error:', e)
 
 
 def advertise():
     # Advertising via bluetoothctl quick method; ensure LE advertising is enabled and connectable
     cmds = [
-        'bluetoothctl --timeout 1 power on',
-        'bluetoothctl --timeout 1 agent NoInputNoOutput',
-        'bluetoothctl --timeout 1 default-agent',
-        'bluetoothctl --timeout 1 set-alias SSSNL-Device',
+        'bluetoothctl --timeout 2 power on',
+        'bluetoothctl --timeout 2 agent NoInputNoOutput',
+        'bluetoothctl --timeout 2 default-agent',
+        'bluetoothctl --timeout 2 set-alias SSSNL-Device',
     ]
     for c in cmds:
         os.system(c)
-    # Prefer LE only advertising; fallback to legacy 'advertising on' for older BlueZ
-    rc = os.system('bluetoothctl --timeout 1 advertise yes')
+    # Prefer LE advertising; fallback to legacy advertising on older BlueZ
+    rc = os.system('bluetoothctl --timeout 2 advertise yes')
     if rc != 0:
-        os.system('bluetoothctl --timeout 1 advertising on')
+        os.system('bluetoothctl --timeout 2 advertising on')
 
 
 def main():

@@ -26,6 +26,16 @@ flutter run -d android --dart-define=BACKEND_BASE_URL=http://<backend-host>:5656
 ```
 - Replace <backend-host> with the IP/hostname of your backend on the local network.
 
+iOS:
+```bash
+flutter run -d ios --dart-define=BACKEND_BASE_URL=http://<backend-host>:5656
+```
+
+Web (no BLE; for media management only):
+```bash
+flutter run -d chrome --dart-define=BACKEND_BASE_URL=http://<backend-host>:5656
+```
+
 ## Provisioning flow
 1) Start the Raspberry Pi BLE service (see raspi-agent/README.md).
 2) In the app, tap Add Device (Setup), enter Wi‑Fi SSID and password.
@@ -37,6 +47,11 @@ flutter run -d android --dart-define=BACKEND_BASE_URL=http://<backend-host>:5656
 ## Build (Release)
 ```bash
 flutter build apk --dart-define=BACKEND_BASE_URL=https://<backend-domain>
+```
+
+iOS (requires signing setup):
+```bash
+flutter build ios --dart-define=BACKEND_BASE_URL=https://<backend-domain>
 ```
 
 ## Troubleshooting

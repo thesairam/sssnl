@@ -1,4 +1,4 @@
-# SSSNL (Web‑Only)
+# SSSNL
 
 A simple dashboard and media manager. The Flask backend reads sensors on Raspberry Pi (PIR + DHT), serves a full‑screen HTML dashboard, and optionally serves two Flutter Web UIs (dashboard and media/dev). Works on Pi and any Linux/desktop browser. A Raspberry Pi BLE agent is available to provision devices (Wi‑Fi + pairing) from a mobile app.
 
@@ -85,11 +85,14 @@ For kiosk + boot startup (systemd), see README_SERVICES.md.
 
 Mobile dev run:
 ```bash
-# Media controls app (Android/iOS):
+# Media controls app (Android):
 cd sssnl_media_controls
-flutter run -d <device-id> --dart-define=BACKEND_BASE_URL=http://<backend-host>:5656
+flutter run -d android --dart-define=BACKEND_BASE_URL=http://<backend-host>:5656
 
-# Dashboard web app:
+# Media controls app (iOS):
+flutter run -d ios --dart-define=BACKEND_BASE_URL=http://<backend-host>:5656
+
+# Dashboard web app (Chrome dev server):
 cd ../sssnl_app
 flutter run -d chrome --web-hostname=0.0.0.0 --web-port 5173 --dart-define=BACKEND_BASE_URL=http://<backend-host>:5656
 ```
@@ -101,3 +104,40 @@ flutter run -d chrome --web-hostname=0.0.0.0 --web-port 5173 --dart-define=BACKE
 - Chromium kiosk blank: ensure `DISPLAY=:0` and `.Xauthority` path for your user.
 - Port conflicts: edit the port in `backend/app.py` or stop other processes.
 - BLE provisioning not discoverable: ensure Pi agent is running, Bluetooth enabled, and BlueZ supports LE advertising; see `raspi-agent/check_env.py`.
+
+## Independent App Launches (Cheat Sheet)
+
+Run each app independently; they communicate over HTTP:
+
+- Backend:
+	```bash
+	cd backend
+	source ../sssnlvenv/bin/activate
+	pip install -r requirements.txt
+	python -m app
+	```
+
+- Dashboard app (Flutter, dev server):
+	```bash
+	cd sssnl_app
+	flutter pub get
+	flutter run -d chrome --dart-define=BACKEND_BASE_URL=http://<backend-host>:5656
+	```
+
+- Media controls app (Flutter mobile):
+	```bash
+	cd sssnl_media_controls
+	flutter pub get
+	flutter run -d android --dart-define=BACKEND_BASE_URL=http://<backend-host>:5656
+	# or: flutter run -d ios --dart-define=BACKEND_BASE_URL=http://<backend-host>:5656
+	```
+
+- Raspberry Pi BLE agent:
+	```bash
+	cd raspi-agent
+	python3 -m venv --system-site-packages .venv
+	source .venv/bin/activate
+	pip install --prefer-binary -r requirements.txt
+	export BACKEND_BASE_URL=http://<backend-host>:5656
+	sudo -E $(pwd)/.venv/bin/python ble_peripheral.py
+	```

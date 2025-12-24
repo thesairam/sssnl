@@ -235,10 +235,9 @@ class _DevicePairingPageState extends State<DevicePairingPage> {
       final subs = FlutterBluePlus.scanResults.listen((results) {
         final filtered = results.where((r) {
           final ad = r.advertisementData;
-          final svcs = ad.serviceUuids.map((u) => u.toString().toLowerCase()).toList(growable: false);
-          final hasSvc = svcs.contains(serviceUuid);
           final connectable = ad.connectable == true;
-          return hasSvc && connectable;
+          // Do not require service UUID in advertisement; we'll verify after connect
+          return connectable;
         }).toList(growable: false);
         setState(() { _devices = filtered; });
       });

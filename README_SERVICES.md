@@ -6,6 +6,7 @@ This guide explains how to run SSSNL as services so it starts at boot and runs i
 - Flask backend (`backend.app`) – serves the HTML dashboard and APIs.
 - Browser in kiosk mode (Chromium) – points to `http://localhost:5656/dashboard`.
 - Optional timer – runs `fetch_message.py` daily to download images into `static/media`.
+ - Optional BLE agent – Raspberry Pi provisioning service that accepts Wi‑Fi SSID/password and pairing code from the mobile app.
 
 ### Database (MariaDB)
 This backend can use MariaDB instead of SQLite. A ready-to-use `docker-compose.yml` is provided.
@@ -150,3 +151,39 @@ chmod +x raspi_setup_and_run.sh
 ./raspi_setup_and_run.sh
 ```
 This installs deps, builds Flutter Web (if `flutter` is available), and starts the backend; it does not open a browser.
+
+## Optional: BLE Agent service (Pi provisioning)
+
+Run the BLE provisioning agent as a service so pairing works immediately after boot.
+
+Create `/etc/systemd/system/sssnl-agent.service`:
+
+```ini
+[Unit]
+Description=SSSNL Raspberry Pi BLE Agent
+After=network-online.target bluetooth.service
+Wants=network-online.target bluetooth.service
+
+[Service]
+Type=simple
+User=<user>
+WorkingDirectory=/home/<user>/sssnl/raspi-agent
+Environment=BACKEND_BASE_URL=http://<backend-host>:5656
+ExecStart=/home/<user>/sssnl/raspi-agent/.venv/bin/python /home/<user>/sssnl/raspi-agent/ble_peripheral.py
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target
+```
+
+Enable and start:
+
+```bash
+sudo systemctl daemon-reload
+sudo systemctl enable sssnl-agent.service
+sudo systemctl start sssnl-agent.service
+sudo systemctl status sssnl-agent.service
+```
+
+See [raspi-agent/README.md](raspi-agent/README.md) for agent prerequisites and troubleshooting.

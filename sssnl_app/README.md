@@ -21,6 +21,12 @@ flutter build web --dart-define=BACKEND_BASE_URL=https://<backend-domain>
 ```
 Serve `build/web` with any static server (Nginx, Caddy) or point the Raspberry Pi kiosk to the hosted URL including `device_mac`.
 
+Backend-served bundles (optional):
+```bash
+flutter build web --release --base-href /dashboard/ --output build/web_dashboard
+# Backend will serve at /dashboard if the folder exists
+```
+
 ## Notes
 - The app polls the backend `/status` and `/playlist` endpoints and plays the playlist when motion is detected.
 - Use the mobile app to upload media to the selected device before testing playback.
